@@ -1,0 +1,649 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chip-8 Emulator | Sajid Ahmed</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Share+Tech+Mono&display=swap');
+
+        :root {
+            /* Blade Runner Theme */
+            --neon-cyan: #00f3ff;
+            --neon-magenta: #ff00ff;
+            --dark-bg: #050510;
+            --panel-bg: rgba(10, 15, 30, 0.9);
+            --border-glow: 0 0 10px rgba(0, 243, 255, 0.5);
+            --text-color: #a0a0ff;
+            --header-font: 'Orbitron', sans-serif;
+            --mono-font: 'Share Tech Mono', monospace;
+        }
+
+        .sidebar-row {
+            display: flex;
+            gap: 10px;
+        }
+
+        .sidebar-col {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+
+        body {
+            background-color: var(--dark-bg);
+            color: var(--text-color);
+            font-family: var(--header-font);
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+            background-image:
+                linear-gradient(rgba(18, 16, 16, 0.1) 50%, rgba(0, 0, 0, 0.2) 50%),
+                linear-gradient(90deg, rgba(255, 0, 0, 0.05), rgba(0, 255, 0, 0.05), rgba(0, 0, 255, 0.05));
+            background-size: 100% 2px, 3px 100%;
+        }
+
+        header {
+            width: 100%;
+            padding: 15px 30px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: rgba(0, 0, 0, 0.8);
+            border-bottom: 2px solid var(--neon-cyan);
+            box-shadow: var(--border-glow);
+            z-index: 10;
+        }
+
+        h1 {
+            margin: 0;
+            font-size: 2rem;
+            color: var(--neon-cyan);
+            text-shadow: 0 0 5px var(--neon-cyan);
+            letter-spacing: 4px;
+            text-transform: uppercase;
+            margin-left: 20px;
+        }
+
+        #status {
+            font-family: var(--mono-font);
+            color: var(--neon-magenta);
+            text-transform: uppercase;
+            position: absolute;
+            bottom: 30px;
+            font-size: 0.9rem;
+            letter-spacing: 1px;
+        }
+
+        /* Contains the emulator canvas, buttons, etc. */
+        .container {
+            display: flex;
+            flex: 1;
+            width: 100%;
+            max-width: 1600px;
+            padding: 20px;
+            gap: 20px;
+            box-sizing: border-box;
+            overflow: hidden;
+            position: relative;
+        }
+
+        /* Optional Scanline Overlay, creates a subtle pixelated effect on all UI elements in the container */
+        /*
+        .container::after {
+            content: " ";
+            display: block;
+            position: absolute;
+            top: 0;
+            left: 0;
+            bottom: 0;
+            right: 0;
+            background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.1) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06));
+            z-index: 2;
+            background-size: 100% 2px, 3px 100%;
+            pointer-events: none;
+        }
+        */
+
+        /* Emulator Area */
+        .emulator-panel {
+            flex: 2;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            background: var(--panel-bg);
+            border: 1px solid var(--neon-cyan);
+            border-radius: 10px;
+            box-shadow: 0 0 15px rgba(0, 243, 255, 0.2), inset 0 0 20px rgba(0, 0, 0, 0.8);
+            position: relative;
+            backdrop-filter: blur(5px);
+        }
+
+        canvas.emscripten {
+            background-color: #000;
+            box-shadow: 0 0 30px rgba(0, 243, 255, 0.15);
+            image-rendering: pixelated;
+            max-width: 100%;
+            max-height: 80%;
+            border: 2px solid #333;
+            width: 960px;
+            height: 480px;
+            border-radius: 4px;
+            z-index: 5;
+        }
+
+        .controls-overlay {
+            margin-top: 25px;
+            display: flex;
+            gap: 15px;
+            z-index: 10;
+        }
+
+        button {
+            background: rgba(0, 243, 255, 0.1);
+            border: 1px solid var(--neon-cyan);
+            color: var(--neon-cyan);
+            padding: 10px 24px;
+            font-family: var(--header-font);
+            cursor: pointer;
+            border-radius: 5px;
+            transition: all 0.3s;
+            text-transform: uppercase;
+            font-weight: bold;
+            font-size: 1rem;
+            letter-spacing: 1px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        button:hover {
+            background: var(--neon-cyan);
+            color: #000;
+            box-shadow: 0 0 20px var(--neon-cyan);
+        }
+
+        /* Panel containing settings, V Registers, CPU Status, etc */
+        .settings-panel {
+            flex: 1;
+            background: var(--panel-bg);
+            border: 1px solid var(--neon-magenta);
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            overflow-y: auto;
+            border-radius: 10px;
+            min-width: 320px;
+            box-shadow: 0 0 15px rgba(255, 0, 255, 0.2);
+            z-index: 5;
+            font-family: var(--mono-font);
+        }
+
+        .panel-header {
+            color: var(--neon-magenta);
+            border-bottom: 2px solid var(--neon-magenta);
+            padding-bottom: 5px;
+            font-size: 1.2rem;
+            margin-bottom: 15px;
+            letter-spacing: 2px;
+            text-shadow: 0 0 5px var(--neon-magenta);
+        }
+
+        .registers-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 8px;
+            font-size: 0.9rem;
+        }
+
+        .reg-item {
+            background: rgba(0, 0, 0, 0.6);
+            padding: 8px;
+            border: 1px solid #444;
+            border-radius: 4px;
+            text-align: center;
+            transition: border-color 0.2s;
+        }
+
+        .reg-item:hover {
+            border-color: var(--neon-cyan);
+        }
+
+        .reg-name {
+            color: #888;
+            font-size: 0.7rem;
+            display: block;
+            margin-bottom: 2px;
+        }
+
+        .reg-val {
+            color: var(--neon-cyan);
+            font-size: 1.1em;
+        }
+
+        select {
+            background: rgba(0, 0, 0, 0.8);
+            color: var(--neon-cyan);
+            border: 1px solid var(--neon-cyan);
+            border-radius: 5px;
+            padding: 8px;
+            flex: 1;
+            font-family: var(--mono-font);
+            font-size: 0.9rem;
+            outline: none;
+        }
+
+        select:focus {
+            box-shadow: 0 0 5px var(--neon-cyan);
+        }
+
+        .drag-drop-zone {
+            border: 2px dashed rgba(255, 0, 255, 0.5);
+            padding: 30px;
+            border-radius: 10px;
+            text-align: center;
+            color: var(--text-color);
+            transition: all 0.3s;
+            cursor: pointer;
+            background: rgba(255, 0, 255, 0.05);
+            font-family: var(--header-font);
+            font-size: 0.9rem;
+        }
+
+        .drag-drop-zone.dragover {
+            border-color: var(--neon-cyan);
+            color: var(--neon-cyan);
+            background: rgba(0, 243, 255, 0.1);
+            box-shadow: 0 0 15px var(--neon-cyan);
+        }
+
+        /* Social Links */
+        .social-links {
+            display: flex;
+            gap: 15px;
+            margin-right: 20px;
+            align-items: center;
+        }
+
+        .copyright-text {
+            color: var(--neon-cyan);
+            font-size: 0.8rem;
+            text-transform: capitalize;
+            letter-spacing: 1px;
+            margin-right: 15px;
+            text-shadow: 0 0 2px var(--neon-cyan);
+            font-family: var(--header-font);
+        }
+
+        .social-btn {
+            color: var(--neon-cyan);
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-decoration: none;
+            filter: drop-shadow(0 0 1px var(--neon-cyan));
+        }
+
+        .social-btn:hover {
+            color: var(--neon-magenta);
+            filter: drop-shadow(0 0 5px var(--neon-magenta));
+            transform: scale(1.1);
+        }
+
+        .social-btn svg {
+            width: 28px;
+            height: 28px;
+            fill: currentColor;
+        }
+    </style>
+</head>
+
+<body>
+
+    <header>
+        <h1>CHIP-8 EMULATOR</h1>
+
+
+        <div class="social-links">
+            <span class="copyright-text"> © 2026 Sajid Ahmed. <br> All Rights Reserved</span>
+            <a href="https://github.com/sahmed0" target="_blank" class="social-btn" title="GitHub">
+                <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                    <path
+                        d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12" />
+                </svg>
+            </a>
+        </div>
+    </header>
+
+    <div class="container">
+        <!-- Emulator Core -->
+        <div class="emulator-panel">
+            <canvas class="emscripten" id="canvas" oncontextmenu="event.preventDefault()"></canvas>
+
+            <div class="controls-overlay">
+                <button id="btn-pause">Pause</button>
+                <button id="btn-step">Step</button>
+                <button id="btn-reset">Reset</button>
+            </div>
+            <div id="status"></div>
+        </div>
+
+        <!-- Settings & Registers Panel -->
+        <div class="settings-panel">
+            <div class="sidebar-row">
+                <div class="sidebar-col">
+                    <div class="panel-header">LOAD GAME</div>
+                    <select id="rom-dropdown">
+                        <option value="" disabled selected>Select Built-in Game</option>
+
+                    </select>
+                </div>
+                <div class="sidebar-col">
+                    <div class="panel-header">THEME</div>
+                    <select id="theme-dropdown">
+                        <option value="" disabled selected>Loading...</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="drag-drop-zone" id="drop-zone">
+                Drag & Drop .ch8 File Here
+            </div>
+
+            <div class="panel-header">CPU STATE</div>
+            <div style="display:flex; justify-content:space-between; margin-bottom:10px;">
+                <span>Program Counter: <span id="reg-pc" class="reg-val">0000</span></span>
+                <span>Index Register: <span id="reg-i" class="reg-val">0000</span></span>
+            </div>
+            <div style="display:flex; justify-content:space-between; margin-bottom:10px;">
+                <span>Delay Timer: <span id="reg-dt" class="reg-val">00</span></span>
+                <span>Sound Timer: <span id="reg-st" class="reg-val">00</span></span>
+            </div>
+
+            <div class="panel-header">DATA REGISTERS (V0-VF)</div>
+            <div class="registers-grid" id="registers-grid">
+                <!-- Generated by JS -->
+            </div>
+
+
+        </div>
+
+        <!-- Emscripten Boilerplate -->
+        <script>
+            /**
+             * Emscripten Module Configuration.
+             * This object interfaces between the C/Wasm code and the JavaScript runtime.
+             * It provides hooks for stdout, rendering, and initialization.
+             */
+            var Module = {
+                /**
+                 * Redirect C printf() to the browser console.
+                 */
+                print: (function () {
+                    return function (text) {
+                        console.log(text);
+                    };
+                })(),
+
+                /**
+                 * Redirect C stderr to the browser console error stream.
+                 */
+                printErr: function (text) {
+                    console.error(text);
+                },
+
+                /**
+                 * Bind the C SDL context to the HTML5 canvas element.
+                 */
+                canvas: (function () {
+                    var canvas = document.getElementById('canvas');
+                    return canvas;
+                })(),
+
+                /**
+                 * Called when the WebAssembly runtime is fully loaded and ready.
+                 * This is the effective "main" entry point for the JS logic.
+                 */
+                onRuntimeInitialized: function () {
+                    console.log("WASM Initialised");
+
+                    // Dynamic ROM Loading: Scan the virtual file system for ROMs
+                    try {
+                        if (Module.FS) {
+                            const roms = Module.FS.readdir('/roms');
+                            const dropdown = document.getElementById('rom-dropdown');
+                            // Keep the first (placeholder) option
+                            dropdown.innerHTML = '<option value="" disabled selected>Select Built-in Game</option>';
+
+                            roms.forEach(rom => {
+                                if (rom !== '.' && rom !== '..') {
+                                    const option = document.createElement('option');
+                                    option.value = 'roms/' + rom;
+                                    // Make a ROM name prettier (remove extension, capitalise)
+                                    let name = rom.replace('.ch8', '').replace(/_/g, ' ');
+                                    name = name.charAt(0).toUpperCase() + name.slice(1);
+                                    option.innerText = name;
+                                    dropdown.appendChild(option);
+                                }
+                            });
+                        }
+                    } catch (e) {
+                        console.error("Error loading ROMs from FS", e);
+                    }
+
+                    // Initialise UI components
+                    initRegisters();
+                    initThemes();
+                    // Start the UI update loop
+                    requestAnimationFrame(updateRegisters);
+                },
+
+                /**
+                 * Called if the runtime aborts (e.g., assert failure).
+                 */
+                onAbort: function (what) {
+                    console.error("WASM Aborted!", what);
+                }
+            };
+
+            // -------------------------------------------------------------------------
+            // UI Logic & C Bindings
+            // -------------------------------------------------------------------------
+
+            let isPaused = false;
+
+            /**
+             * Initialise the Registers panel and bind UI event listeners.
+             * Generates the V0-VF grid and sets up button clicks.
+             */
+            function initRegisters() {
+                // Generate Register Grid (V0 - VF)
+                const grid = document.getElementById('registers-grid');
+                grid.innerHTML = '';
+                for (let i = 0; i < 16; i++) {
+                    const hex = i.toString(16).toUpperCase();
+                    grid.innerHTML += `
+                    <div class="reg-item">
+                        <span class="reg-name">V${hex}</span>
+                        <div class="reg-val" id="val-v${i}">00</div>
+                    </div>
+                `;
+                }
+
+                // Bind "Pause" Button
+                document.getElementById('btn-pause').onclick = function () {
+                    isPaused = !isPaused;
+                    this.innerText = isPaused ? "Resume" : "Pause";
+                    // Call C function to set pause state
+                    if (Module._set_emulator_paused) Module._set_emulator_paused(isPaused);
+                };
+
+                // Bind "Step" Button (Single Cycle)
+                document.getElementById('btn-step').onclick = function () {
+                    if (isPaused && Module._step_single_cycle) {
+                        Module._step_single_cycle();
+                        requestAnimationFrame(updateRegisters); // Force UI update
+                    }
+                };
+
+                // Bind "Reset" Button
+                document.getElementById('btn-reset').onclick = function () {
+                    if (Module._reset_emulator_state) {
+                        Module._reset_emulator_state();
+                        // Unpause if paused
+                        if (isPaused) {
+                            isPaused = false;
+                            document.getElementById('btn-pause').innerText = "Pause";
+                            if (Module._set_emulator_paused) Module._set_emulator_paused(false);
+                        }
+                        requestAnimationFrame(updateRegisters);
+                    }
+                };
+
+                // Setup Drag & Drop Zone
+                const dropZone = document.getElementById('drop-zone');
+                dropZone.ondragover = (e) => { e.preventDefault(); dropZone.classList.add('dragover'); };
+                dropZone.ondragleave = () => dropZone.classList.remove('dragover');
+                dropZone.ondrop = (e) => {
+                    e.preventDefault();
+                    dropZone.classList.remove('dragover');
+                    const file = e.dataTransfer.files[0];
+                    loadRomFile(file);
+                };
+
+                // Bind ROM Dropdown (Auto-Load on change)
+                document.getElementById('rom-dropdown').onchange = () => {
+                    const path = document.getElementById('rom-dropdown').value;
+                    if (path) loadBuiltinRom(path);
+                    // Reset focus to canvas so keys work immediately
+                    document.getElementById('canvas').focus();
+                };
+            }
+
+            /**
+             * Load a ROM file uploaded by the user.
+             * Writes the file to the Emscripten Virtual File System (VFS) and tells C to load it.
+             *
+             * @param {File} file - The file object from the drag-and-drop event.
+             */
+            function loadRomFile(file) {
+                const reader = new FileReader();
+                reader.onload = function (e) {
+                    const data = new Uint8Array(e.target.result);
+                    // Write to Emscripten VFS
+                    try {
+                        const filename = '/roms/' + file.name;
+                        Module.FS.writeFile(filename, data);
+                        // Load using the C helper (ccall)
+                        // Signature: bool load_rom_from_file(char* filename)
+                        const success = Module.ccall('load_rom_from_file', 'boolean', ['string'], [filename]);
+                        if (success) {
+                            document.getElementById('status').innerText = "Loaded: " + file.name;
+                        } else {
+                            document.getElementById('status').innerText = "Error loading " + file.name;
+                        }
+                    } catch (err) {
+                        console.error("Error writing file to VFS", err);
+                        document.getElementById('status').innerText = "Error writing file";
+                    }
+                };
+                reader.readAsArrayBuffer(file);
+            }
+
+            /**
+             * Load a built-in ROM from the VFS.
+             *
+             * @param {string} path - The VFS path to the ROM (e.g., "roms/pong.ch8").
+             */
+            function loadBuiltinRom(path) {
+                // Read directly from Emscripten File System via C helper
+                // This avoids copying data to JS and back
+                try {
+                    const success = Module.ccall('load_rom_from_file', 'boolean', ['string'], [path]);
+                    if (success) {
+                        document.getElementById('status').innerText = "Loaded: " + path;
+                    } else {
+                        document.getElementById('status').innerText = "Error loading " + path;
+                    }
+                } catch (e) {
+                    console.error("Error invoking load_rom_from_file", e);
+                    document.getElementById('status').innerText = "Error loading " + path;
+                }
+            }
+
+
+
+
+            /**
+             * Populate the Theme selection dropdown.
+             * Queries the C backend for available themes.
+             */
+            function initThemes() {
+                const dropdown = document.getElementById('theme-dropdown');
+                if (Module._get_available_theme_count && Module._get_theme_name_at_index) {
+                    const count = Module._get_available_theme_count();
+                    dropdown.innerHTML = ''; // Clear loading
+
+                    for (let i = 0; i < count; i++) {
+                        const ptr = Module._get_theme_name_at_index(i);
+                        const name = Module.UTF8ToString(ptr);
+
+                        const option = document.createElement('option');
+                        option.value = i;
+                        option.innerText = name;
+                        dropdown.appendChild(option);
+                    }
+
+                    dropdown.onchange = () => {
+                        const index = parseInt(dropdown.value);
+                        if (Module._set_active_theme) Module._set_active_theme(index);
+                    };
+                }
+            }
+
+            /**
+             * Update the CPU status panel.
+             * Queries the C backend for Register values, PC, and Timers.
+             * Called recursively via requestAnimationFrame.
+             */
+            function updateRegisters() {
+                if (Module._get_program_counter) {
+                    // Update CPU Registers
+                    document.getElementById('reg-pc').innerText = toHex(Module._get_program_counter(), 4);
+                    document.getElementById('reg-i').innerText = toHex(Module._get_index_register(), 4);
+                    document.getElementById('reg-dt').innerText = toHex(Module._get_delay_timer_value(), 2);
+                    document.getElementById('reg-st').innerText = toHex(Module._get_sound_timer_value(), 2);
+
+                    // Update General Purpose Registers (V0-VF)
+                    for (let i = 0; i < 16; i++) {
+                        const val = Module._get_register_v_value(i);
+                        document.getElementById(`val-v${i}`).innerText = toHex(val, 2);
+                    }
+
+                }
+                requestAnimationFrame(updateRegisters);
+            }
+
+            /**
+             * Helper to format numbers as Hex strings.
+             * @param {number} num - The number to format.
+             * @param {number} padding - The desired length (e.g., 2 for 0xFF, 4 for 0xFFFF).
+             * @returns {string} Hex string (e.g., "0F").
+             */
+            function toHex(num, padding) {
+                return num.toString(16).toUpperCase().padStart(padding, '0');
+            }
+
+        </script>
+        <script src="chip8.js"></script>
+</body>
+
+</html>
