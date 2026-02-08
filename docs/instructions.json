@@ -1,14 +1,14 @@
 {
-    "roms/Brix.ch8": "Move: Q / E",
-    "roms/Glitch_Ghost.ch8": "Move: W / A / S / D, Action/Haunt: E",
-    "roms/Keypad_Test.ch8": "Test if Hex Keys mapping correctly to QWERTY",
-    "roms/Missile.ch8": "Shoot: W",
-    "roms/Pong.ch8": "Player 1: 1 / Q, Player 2: 4 / R",
-    "roms/Pong_2.ch8": "Player 1: A / Q, Player 2: 4 / R",
-    "roms/Snake.ch8": "Move: 2 / Q / E / S",
-    "roms/Space_Invaders.ch8": "Shoot: W, Move: Q / E",
-    "roms/Tank.ch8": "Move: 2 / Q / E / S, Fire: W",
-    "roms/Tetris.ch8": "Move: Q / E, Rotate: W, Drop: S",
-    "roms/Tic_Tac_Toe.ch8": "Grid Input: 1 - 9",
-    "roms/UFO.ch8": "Shoot: W, Move: Q / E"
+    "roms/Brix.ch8": "1 Player: Move Left Q, Move Right E",
+    "roms/Glitch_Ghost.ch8": "1 Player:Move: W / A / S / D, Start/Haunt: E",
+    "roms/Keypad_Test.ch8": "Test: [1,2,3,4], [Q,W,E,R], [A,S,D,F], [Z,X,C,V]",
+    "roms/Missile.ch8": "1 Player: Shoot: S",
+    "roms/Pong.ch8": "1 Player: Move Up: 1, Move Down: Q",
+    "roms/Pong_2.ch8": "1 Player: Move Up: 1, Move Down: Q",
+    "roms/Snake.ch8": "1 Player: Move: W / A / S / D",
+    "roms/Space_Invaders.ch8": "1 Player: Start/Shoot: W, Move Left Q, Move Right E",
+    "roms/Tank.ch8": "1 Player: Move Down 2, Move Left Q, Move Right E, Move Up S, Fire: W",
+    "roms/Tetris.ch8": "1 Player: Move Left: W, Move Right: E, Rotate: Q, Drop: A",
+    "roms/Tic_Tac_Toe.ch8": "2 Players: Grid Input: [1,2,3], [Q,W,E], [A,S,D]",
+    "roms/UFO.ch8": "1 Player: Shoot Up: W, Shoot Left: Q, Shoot Right: E"
 }
