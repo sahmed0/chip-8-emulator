@@ -115,8 +115,9 @@ const int CPU_CYCLES_PER_FRAME =
  * Used by JS to visualize RAM contents.
  * @return Pointer to the 4096-byte memory array.
  */
-EMSCRIPTEN_KEEPALIVE
-uint8_t *get_memory_buffer_ptr() { return g_chip8_core.memory; }
+EMSCRIPTEN_KEEPALIVE uint8_t *get_memory_buffer_ptr() {
+  return g_chip8_core.memory;
+}
 
 /**
  * Get the value of a specific V-register.
@@ -241,6 +242,13 @@ EMSCRIPTEN_KEEPALIVE
 void set_emulator_paused(bool paused) { g_is_paused = paused; }
 
 /**
+ * Get the current pause state.
+ * @return true if paused, false otherwise.
+ */
+EMSCRIPTEN_KEEPALIVE
+bool get_is_paused() { return g_is_paused; }
+
+/**
  * Executes a single CPU cycle while paused.
  * Allows the user to step through instructions one by one.
  */
@@ -248,21 +256,6 @@ EMSCRIPTEN_KEEPALIVE
 void step_single_cycle() {
   if (g_is_paused) {
     chip8_cycle(&g_chip8_core);
-  }
-}
-
-/**
- * Handle key state changes from the Web UI.
- * This overrides standard SDL keyboard handling on the web to allow for
- * better mobile support and custom mappings.
- *
- * @param key The key index (0-15).
- * @param is_pressed true if key down, false if key up.
- */
-EMSCRIPTEN_KEEPALIVE
-void set_key_state(int key, bool is_pressed) {
-  if (key >= 0 && key <= 0xF) {
-    chip8_set_key(&g_chip8_core, key, is_pressed);
   }
 }
 
@@ -411,6 +404,36 @@ void emulator_main_loop(void) {
           g_chip8_core.draw_flag = true;
         }
         break;
+
+      // --- New Control Shortcuts ---
+      case SDLK_SPACE:
+        if (event.type == SDL_KEYDOWN) {
+          g_is_paused = !g_is_paused;
+          // Sync with JS if needed (optional, JS polls status or we push it?
+          // For now, C handles the logic, JS button might get out of sync
+          // visually unless we call a JS function, but let's stick to C logic
+          // first. Actually, better to expose a way for JS to know, or just let
+          // C handle it. The JS 'updateRegisters' won't know it's paused unless
+          // we export a getter. We'll rely on visual feedback (screen stops)
+          // for now. Note: The JS 'Pause' button text won't update
+          // automatically with this approach. Users requested "map buttons to
+          // keyboard", so functional parity is key.
+        }
+        break;
+
+      case SDLK_RIGHT:
+        if (event.type == SDL_KEYDOWN && g_is_paused) {
+          chip8_cycle(&g_chip8_core);
+          g_chip8_core.draw_flag = true; // Force redraw to show step result
+        }
+        break;
+
+      case SDLK_LEFT:
+        if (event.type == SDL_KEYDOWN) {
+          reset_emulator_state();
+          g_is_paused = false; // Auto-resume on reset
+        }
+        break;
       }
 
       if (chip8_key != -1) {
@@ -487,12 +510,21 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
+  // Fetch the title dynamically from the HTML document using Emscripten JS
+  // interop
+  char *window_title = (char *)EM_ASM_INT({
+    var title = document.title;
+    var buffer = _malloc(lengthBytesUTF8(title) + 1);
+    stringToUTF8(title, buffer, lengthBytesUTF8(title) + 1);
+    return buffer;
+  });
+
   // Create the emulator window
-  // "Chip-8 Emulator | Sajid Ahmed" to match the HTML title
-  g_sdl_window =
-      SDL_CreateWindow("Chip-8 Emulator | Sajid Ahmed", SDL_WINDOWPOS_CENTERED,
-                       SDL_WINDOWPOS_CENTERED, WINDOW_WIDTH, WINDOW_HEIGHT,
-                       SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
+  g_sdl_window = SDL_CreateWindow(
+      window_title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+      WINDOW_WIDTH, WINDOW_HEIGHT, SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
+
+  free(window_title); // Free the string allocated in JS
 
   if (g_sdl_window == NULL) {
     LOG_ERROR("Window could not be created! SDL_Error: %s", SDL_GetError());

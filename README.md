@@ -9,7 +9,7 @@
 ## ⏯️ Live Demo
 You don't need to install anything to play! Just visit the **[Chip-8 Emulator Website](https://sahmed0.github.io/chip-8-emulator/)**.
 
-![Mockup](mockup.png)
+![Mockup](mockup2.png)
 
 ## 🧐 The Problem
 In an era of high-level abstractions and garbage-collected languages, the fundamental magic of how computers actually *think*—fetch, decode, execute—is often lost. I wanted to peel back the layers and build a system that speaks directly to memory and registers.

@@ -1,0 +1,14 @@
+{
+    "roms/Brix.ch8": "Move: Q / E",
+    "roms/Glitch_Ghost.ch8": "Move: W / A / S / D, Action/Haunt: E",
+    "roms/Keypad_Test.ch8": "Test if Hex Keys mapping correctly to QWERTY",
+    "roms/Missile.ch8": "Shoot: W",
+    "roms/Pong.ch8": "Player 1: 1 / Q, Player 2: 4 / R",
+    "roms/Pong_2.ch8": "Player 1: A / Q, Player 2: 4 / R",
+    "roms/Snake.ch8": "Move: 2 / Q / E / S",
+    "roms/Space_Invaders.ch8": "Shoot: W, Move: Q / E",
+    "roms/Tank.ch8": "Move: 2 / Q / E / S, Fire: W",
+    "roms/Tetris.ch8": "Move: Q / E, Rotate: W, Drop: S",
+    "roms/Tic_Tac_Toe.ch8": "Grid Input: 1 - 9",
+    "roms/UFO.ch8": "Shoot: W, Move: Q / E"
+}

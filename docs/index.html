@@ -4,6 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" type="image/svg+xml" href="vite.svg?v=1" />
     <title>Chip-8 Emulator | Sajid Ahmed</title>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Share+Tech+Mono&display=swap');
@@ -68,16 +69,6 @@
             letter-spacing: 4px;
             text-transform: uppercase;
             margin-left: 20px;
-        }
-
-        #status {
-            font-family: var(--mono-font);
-            color: var(--neon-magenta);
-            text-transform: uppercase;
-            position: absolute;
-            bottom: 30px;
-            font-size: 0.9rem;
-            letter-spacing: 1px;
         }
 
         /* Contains the emulator canvas, buttons, etc. */
@@ -225,7 +216,7 @@
 
         .reg-val {
             color: var(--neon-cyan);
-            font-size: 1.1em;
+            font-size: 1.1rem;
         }
 
         select {
@@ -303,6 +294,36 @@
             height: 28px;
             fill: currentColor;
         }
+
+        /* Instructions Panel */
+        .instructions-panel {
+            margin-top: 15px;
+            padding: 10px 20px;
+            background: rgba(0, 243, 255, 0.05);
+            border-left: 3px solid var(--neon-cyan);
+            color: var(--text-color);
+            font-family: var(--mono-font);
+            font-size: 0.9rem;
+            text-align: center;
+            width: 100%;
+            box-sizing: border-box;
+            border-radius: 0 4px 4px 0;
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            align-items: center;
+            text-shadow: 0 0 2px rgba(0, 243, 255, 0.3);
+        }
+
+        .instruction-label {
+            color: var(--neon-magenta);
+            font-weight: bold;
+            letter-spacing: 1px;
+        }
+
+        .key-hint {
+            font-size: 0.7em;
+        }
     </style>
 </head>
 
@@ -310,7 +331,6 @@
 
     <header>
         <h1>CHIP-8 EMULATOR</h1>
-
 
         <div class="social-links">
             <span class="copyright-text"> © 2026 Sajid Ahmed. <br> All Rights Reserved</span>
@@ -329,11 +349,16 @@
             <canvas class="emscripten" id="canvas" oncontextmenu="event.preventDefault()"></canvas>
 
             <div class="controls-overlay">
-                <button id="btn-pause">Pause</button>
-                <button id="btn-step">Step</button>
-                <button id="btn-reset">Reset</button>
+                <button id="btn-pause">Pause <span class="key-hint">(Space)</span></button>
+                <button id="btn-step">Step <span class="key-hint">(Right)</span></button>
+                <button id="btn-reset">Reset <span class="key-hint">(Left)</span></button>
             </div>
-            <div id="status"></div>
+
+            <!-- Game Instructions Display -->
+            <div id="rom-instructions" class="instructions-panel">
+                <span class="instruction-label">CONTROLS:</span>
+                <span id="instruction-text">"Shoot: W, Move: Q / E"</span>
+            </div>
         </div>
 
         <!-- Settings & Registers Panel -->
@@ -381,7 +406,7 @@
             /**
              * Emscripten Module Configuration.
              * This object interfaces between the C/Wasm code and the JavaScript runtime.
-             * It provides hooks for stdout, rendering, and initialization.
+             * It provides hooks for stdout, rendering, and initialisation.
              */
             var Module = {
                 /**
@@ -414,6 +439,15 @@
                  */
                 onRuntimeInitialized: function () {
                     console.log("WASM Initialised");
+
+                    // Load Instructions
+                    fetch('instructions.json')
+                        .then(response => response.json())
+                        .then(data => {
+                            romInstructions = data;
+                            console.log("Instructions loaded", romInstructions);
+                        })
+                        .catch(err => console.error("Failed to load instructions", err));
 
                     // Dynamic ROM Loading: Scan the virtual file system for ROMs
                     try {
@@ -459,6 +493,16 @@
             // -------------------------------------------------------------------------
 
             let isPaused = false;
+            let romInstructions = {};
+
+            function updateInstructionsUI(romNameKey) {
+                const textEl = document.getElementById('instruction-text');
+                if (romInstructions[romNameKey]) {
+                    textEl.innerText = romInstructions[romNameKey];
+                } else {
+                    textEl.innerText = "See Keypad (1-V) for generic controls";
+                }
+            }
 
             /**
              * Initialise the Registers panel and bind UI event listeners.
@@ -481,7 +525,7 @@
                 // Bind "Pause" Button
                 document.getElementById('btn-pause').onclick = function () {
                     isPaused = !isPaused;
-                    this.innerText = isPaused ? "Resume" : "Pause";
+                    this.innerHTML = isPaused ? 'Resume <span class="key-hint">(Space)</span>' : 'Pause <span class="key-hint">(Space)</span>';
                     // Call C function to set pause state
                     if (Module._set_emulator_paused) Module._set_emulator_paused(isPaused);
                 };
@@ -522,7 +566,10 @@
                 // Bind ROM Dropdown (Auto-Load on change)
                 document.getElementById('rom-dropdown').onchange = () => {
                     const path = document.getElementById('rom-dropdown').value;
-                    if (path) loadBuiltinRom(path);
+                    if (path) {
+                        loadBuiltinRom(path);
+                        updateInstructionsUI(path);
+                    }
                     // Reset focus to canvas so keys work immediately
                     document.getElementById('canvas').focus();
                 };
@@ -545,14 +592,8 @@
                         // Load using the C helper (ccall)
                         // Signature: bool load_rom_from_file(char* filename)
                         const success = Module.ccall('load_rom_from_file', 'boolean', ['string'], [filename]);
-                        if (success) {
-                            document.getElementById('status').innerText = "Loaded: " + file.name;
-                        } else {
-                            document.getElementById('status').innerText = "Error loading " + file.name;
-                        }
                     } catch (err) {
                         console.error("Error writing file to VFS", err);
-                        document.getElementById('status').innerText = "Error writing file";
                     }
                 };
                 reader.readAsArrayBuffer(file);
@@ -568,14 +609,8 @@
                 // This avoids copying data to JS and back
                 try {
                     const success = Module.ccall('load_rom_from_file', 'boolean', ['string'], [path]);
-                    if (success) {
-                        document.getElementById('status').innerText = "Loaded: " + path;
-                    } else {
-                        document.getElementById('status').innerText = "Error loading " + path;
-                    }
                 } catch (e) {
                     console.error("Error invoking load_rom_from_file", e);
-                    document.getElementById('status').innerText = "Error loading " + path;
                 }
             }
 
@@ -626,6 +661,15 @@
                     for (let i = 0; i < 16; i++) {
                         const val = Module._get_register_v_value(i);
                         document.getElementById(`val-v${i}`).innerText = toHex(val, 2);
+                    }
+
+                    // Sync Pause State with C backend (handles Spacebar toggling)
+                    if (Module._get_is_paused) {
+                        const backendPaused = Module._get_is_paused();
+                        if (isPaused !== backendPaused) {
+                            isPaused = backendPaused;
+                            document.getElementById('btn-pause').innerHTML = isPaused ? 'Resume <span class="key-hint">(Space)</span>' : 'Pause <span class="key-hint">(Space)</span>';
+                        }
                     }
 
                 }
