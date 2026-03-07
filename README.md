@@ -11,14 +11,14 @@ You don't need to install anything to play! Just visit the **[Chip-8 Emulator We
 
 ![Mockup](mockup2.png)
 
-## 🧐 The Problem
+## The Problem
 In an era of high-level abstractions and garbage-collected languages, the fundamental magic of how computers actually *think*—fetch, decode, execute—is often lost. I wanted to peel back the layers and build a system that speaks directly to memory and registers.
 
 This project solves the challenge of bringing legacy, low-level emulation to the modern web without sacrificing performance or accuracy. It serves as a bridge between the raw power of **C** and the accessibility of **JavaScript**.
 
 ---
 
-## 🛠 Tech Stack & Justification
+## Tech Stack & Justification
 
 | Technology | Role | Justification |
 | :--- | :--- | :--- |
@@ -29,7 +29,7 @@ This project solves the challenge of bringing legacy, low-level emulation to the
 
 ---
 
-## ✨ Key Features
+## Key Features
 
 - **Cycle-Accurate Emulation**: Implements all 35 standard Chip-8 opcodes with precise timing.
 - **Dynamic ROM Loading**: Supports Drag & Drop functionality and loads ROMs directly into the virtual filesystem.
@@ -39,7 +39,7 @@ This project solves the challenge of bringing legacy, low-level emulation to the
 
 ---
 
-## 🧠 Technical Challenges & Solutions
+## Technical Challenges & Solutions
 
 ### 1. Mastering Low-Level Memory Management
 **The Challenge:** Learning to manually manage memory in C was a significant paradigm shift. Understanding how pointers, the stack, and the heap interact directly with hardware was critical not just for the emulator's correctness, but for its stability.
@@ -59,7 +59,7 @@ This project solves the challenge of bringing legacy, low-level emulation to the
 
 ---
 
-## 🔮 Future Optimisations
+## Future Optimisations
 
 If I had more time, I would love to implement:
 
