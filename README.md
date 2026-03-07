@@ -2,6 +2,7 @@
 
 **A high-performance, cycle-accurate Chip-8 interpreter running directly in your browser, powered by C and WebAssembly.**
 
+![Copyright](https://img.shields.io/badge/copyright-2026_Sajid_Ahmed-blue.svg)
 [![Language: C](https://img.shields.io/badge/Language-C-blue.svg)](https://en.wikipedia.org/wiki/C_(programming_language))
 [![Platform: WebAssembly](https://img.shields.io/badge/Platform-WebAssembly-orange.svg)](https://webassembly.org/)
 
