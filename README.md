@@ -8,7 +8,7 @@
 
 ---
 ## ⏯️ Live Demo
-You don't need to install anything to play! Just visit the **[Chip-8 Emulator Website](https://sahmed0.github.io/chip-8-emulator/)**.
+You don't need to install anything to play! Just visit the **[Chip-8 Emulator Website](https://chip8.sajidahmed.co.uk)**.
 
 ![Mockup](mockup2.png)
 
@@ -70,18 +70,14 @@ If I had more time, I would love to implement:
 
 ---
 
-## Licence & Usage
-
+## Licensing & Usage
 Copyright (c) 2026 Sajid Ahmed. **All Rights Reserved.**
 
-This repository is strictly for **portfolio review and recruitment purposes**.
+This repository is a **Proprietary Portfolio Project**.
 
-### Use Constraints:
-* **No Unauthorised Distribution:** You may not redistribute, sublicense, or sell any part of this source code.
-* **No Commercial Use:** This software may not be used for any commercial or production purposes.
-* **AI & Machine Learning Restriction:** Use of this source code, in whole or in part, for the purpose of training, fine-tuning, or validating machine learning or artificial intelligence models (including but not limited to LLMs and generative AI) is **strictly prohibited** without express written permission from the author.
-* **Viewing & Forking:** Permission is granted to view the source code and fork the repository on GitHub for the purpose of personal review only.
+While I am a strong supporter of Open Source Software, this specific codebase represents a significant personal investment of time and effort and is therefore provided for **recruitment evaluation only**.
 
-The software is provided **" as is "**, without warranty of any kind.
+* **Permitted:** Viewing, forking (within GitHub only), and local execution for review.
+* **Prohibited:** Modification, redistribution, commercial use, and AI/LLM training.
 
-*See the [LICENSE](LICENSE) file for the full legal text.*
+For the full legal terms, please see the [LICENSE](./LICENSE) file.
