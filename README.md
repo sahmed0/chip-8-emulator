@@ -71,13 +71,15 @@ If I had more time, I would love to implement:
 ---
 
 ## Licensing & Usage
+![Copyright](https://img.shields.io/badge/Copyright-2026_Sajid_Ahmed-brightgreen.svg)
+
 Copyright (c) 2026 Sajid Ahmed. **All Rights Reserved.**
 
-This repository is a **Proprietary Portfolio Project**.
+This repository is a **Proprietary Project**.
 
-While I am a strong supporter of Open Source Software, this specific codebase represents a significant personal investment of time and effort and is therefore provided for **recruitment evaluation only**.
+While I am a strong supporter of Open Source Software, this specific codebase represents a significant personal investment of time and effort and is therefore provided with the following restrictions:
 
-* **Permitted:** Viewing, forking (within GitHub only), and local execution for review.
+* **Permitted:** Viewing, forking (within GitHub only), and local execution for evaluation and personal, non-commercial usage only.
 * **Prohibited:** Modification, redistribution, commercial use, and AI/LLM training.
 
 For the full legal terms, please see the [LICENSE](./LICENSE) file.
