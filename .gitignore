@@ -509,6 +509,7 @@ Gemfile.lock
 # Explicitly ignore local build artifacts (GitHub Actions will build these)
 docs/chip8.js
 docs/chip8.wasm
+docs/chip8.data
 
 # Keep the source files in docs
 !docs/index.html
