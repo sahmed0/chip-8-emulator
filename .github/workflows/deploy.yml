@@ -2,7 +2,7 @@ name: Deploy to GitHub Pages
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   workflow_dispatch:
 
 permissions:
@@ -35,6 +35,8 @@ jobs:
           -s "EXPORTED_RUNTIME_METHODS=['ccall', 'cwrap', 'FS', 'UTF8ToString']" \
           -o ../docs/chip8.js
 
+      - name: Copy CNAME
+        run: cp CNAME docs/CNAME
 
       - name: Setup Pages
         uses: actions/configure-pages@v4
@@ -42,7 +44,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: 'docs'
+          path: "docs"
 
       - name: Deploy to GitHub Pages
         id: deployment
