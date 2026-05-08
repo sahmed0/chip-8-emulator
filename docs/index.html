@@ -3,6 +3,7 @@
 
 <head>
     <meta charset="UTF-8">
+    <meta name="robots" content="noindex">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="apple-touch-icon" sizes="180x180" href="favicon/apple-touch-icon.png">
     <link rel="icon" type="image/png" sizes="32x32" href="favicon/favicon-32x32.png">
@@ -10,7 +11,9 @@
     <script src="https://cdn.jsdelivr.net/npm/@kiwicarbon/assets/icon.js"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Doto:wght@100..900&family=Roboto+Mono:ital,wght@0,100..700;1,100..700&display=swap" rel="stylesheet">
+    <link
+        href="https://fonts.googleapis.com/css2?family=Doto:wght@100..900&family=Roboto+Mono:ital,wght@0,100..700;1,100..700&display=swap"
+        rel="stylesheet">
 
 
     <title>Chip-8 Emulator | Sajid Ahmed</title>
@@ -63,7 +66,7 @@
             width: 100%;
             display: inline-flex;
             padding: 0.5rem;
-            justify-content:space-between;
+            justify-content: space-between;
             background: rgba(0, 0, 0, 0.5);
             border-bottom: 2px solid var(--neon-cyan);
             box-shadow: var(--border-glow);
@@ -348,7 +351,7 @@
             font-size: 0.7em;
         }
 
-                /* Loader */
+        /* Loader */
         #touchscreen-warning {
             visibility: hidden;
             object-fit: cover;
@@ -389,7 +392,7 @@
             max-width: 90vw;
         }
 
-    
+
         @media (max-width: 1200px) {
             body {
                 height: auto;
@@ -458,14 +461,14 @@
 
 
         @media (pointer: coarse) {
-        #touchscreen-warning {
+            #touchscreen-warning {
                 visibility: visible;
-        }
+            }
 
-        * {
-            touch-action: none;
+            * {
+                touch-action: none;
+            }
         }
-}
     </style>
 </head>
 
