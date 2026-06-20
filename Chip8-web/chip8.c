@@ -185,35 +185,50 @@ void chip8_cycle(chip8_t *chip8) {
     case 0x4: // ADD Vx, Vy (Set VF = carry)
     {
       uint16_t sum = chip8->registers[reg_x] + chip8->registers[reg_y];
-      // IF sum > 255, we have an overflow (Carry). Set VF = 1.
-      chip8->registers[0xF] = (sum > 255) ? 1 : 0;
+      // IF sum > 255, we have an overflow (Carry). VF = 1.
+      uint8_t flag = (sum > 255) ? 1 : 0;
       chip8->registers[reg_x] = sum & 0xFF; // Store only the lowest 8 bits
+      // Write VF last so the flag survives even when Vx == VF.
+      chip8->registers[0xF] = flag;
     } break;
     case 0x5: // SUB Vx, Vy (Set VF = NOT borrow)
-      // If Vx > Vy, there is no borrow (result is positive). VF = 1.
-      chip8->registers[0xF] =
-          (chip8->registers[reg_x] > chip8->registers[reg_y]) ? 1 : 0;
-      chip8->registers[reg_x] -= chip8->registers[reg_y];
-      break;
+    {
+      // If Vx >= Vy, there is no borrow. VF = 1.
+      uint8_t flag =
+          (chip8->registers[reg_x] >= chip8->registers[reg_y]) ? 1 : 0;
+      chip8->registers[reg_x] =
+          chip8->registers[reg_x] - chip8->registers[reg_y];
+      // Write VF last so the flag survives even when Vx == VF.
+      chip8->registers[0xF] = flag;
+    } break;
     case 0x6: // SHR Vx (Shift Right)
+    {
       // Ambiguity: Modern Chip-8 implementations (Schip) shift Vx.
       // Original COSMAC VIP shifted Vy into Vx. We use modern behavior (Vx).
-      // Save LSB in VF before shift.
-      chip8->registers[0xF] = chip8->registers[reg_x] & 0x1;
+      // Save LSB for VF.
+      uint8_t flag = chip8->registers[reg_x] & 0x1;
       chip8->registers[reg_x] >>= 1;
-      break;
+      // Write VF last so the flag survives even when Vx == VF.
+      chip8->registers[0xF] = flag;
+    } break;
     case 0x7: // SUBN Vx, Vy (Set VF = NOT borrow)
-      // If Vy > Vx, result is positive. VF = 1.
-      chip8->registers[0xF] =
-          (chip8->registers[reg_y] > chip8->registers[reg_x]) ? 1 : 0;
+    {
+      // If Vy >= Vx, there is no borrow. VF = 1.
+      uint8_t flag =
+          (chip8->registers[reg_y] >= chip8->registers[reg_x]) ? 1 : 0;
       chip8->registers[reg_x] =
           chip8->registers[reg_y] - chip8->registers[reg_x];
-      break;
+      // Write VF last so the flag survives even when Vx == VF.
+      chip8->registers[0xF] = flag;
+    } break;
     case 0xE: // SHL Vx (Shift Left)
-      // Save MSB in VF before shift.
-      chip8->registers[0xF] = (chip8->registers[reg_x] >> 7) & 0x1;
+    {
+      // Save MSB for VF.
+      uint8_t flag = (chip8->registers[reg_x] >> 7) & 0x1;
       chip8->registers[reg_x] <<= 1;
-      break;
+      // Write VF last so the flag survives even when Vx == VF.
+      chip8->registers[0xF] = flag;
+    } break;
     }
   } break;
 
