@@ -4,6 +4,7 @@
 #include <stdbool.h> // Standard bool support (true/false).
 #include <stdio.h>   // Standard I/O (printf, fopen, etc.).
 #include <stdlib.h>  // Standard Library (malloc, free, rand).
+#include <string.h>  // String helpers (strdup) for the native window title.
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h> // Emscripten headers for WASM integration (main loop, keepalive).
@@ -511,13 +512,18 @@ int main(int argc, char *argv[]) {
   }
 
   // Fetch the title dynamically from the HTML document using Emscripten JS
-  // interop
+  // interop. On desktop there is no document, so fall back to a static title.
+  // Either branch yields a heap-allocated string freed below.
+#ifdef __EMSCRIPTEN__
   char *window_title = (char *)EM_ASM_INT({
     var title = document.title;
     var buffer = _malloc(lengthBytesUTF8(title) + 1);
     stringToUTF8(title, buffer, lengthBytesUTF8(title) + 1);
     return buffer;
   });
+#else
+  char *window_title = strdup("Chip-8 Emulator");
+#endif
 
   // Create the emulator window
   g_sdl_window = SDL_CreateWindow(

@@ -70,6 +70,16 @@ If I had more time, I would love to implement:
 
 ---
 
+## Running Tests Locally
+
+`mingw32-make test`     #only if make is installed
+
+`.\run_tests.ps1`       # build + run
+
+`.\run_tests.ps1 -v`    # verbose per-test output
+
+---
+
 ## Licensing & Usage
 ![Copyright](https://img.shields.io/badge/Copyright-2026_Sajid_Ahmed-brightgreen.svg)
 
