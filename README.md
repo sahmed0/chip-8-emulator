@@ -60,6 +60,31 @@ This project solves the challenge of bringing legacy, low-level emulation to the
 
 ---
 
+## Robustness
+
+The emulator accepts untrusted ROM input (drag-and-drop), so the core is fuzz-tested
+under AddressSanitizer and UndefinedBehaviorSanitizer. The harness is in `Chip8-web/fuzz/`.
+
+Running `make fuzz-run` (requires clang, see Makefile) found two bugs, both at chip8.c:89-90:
+
+```C
+uint16_t opcode = (chip8->memory[chip8->program_counter] << 8) |
+                chip8->memory[chip8->program_counter + 1];
+chip8->program_counter += 2;
+```
+
+- UBSan - Out-of-Bounds Read at PC = 0xFFF
+
+    The fuzzer drove program_counter to 0xFFF (4095). Reading memory[4095] is valid (last byte), but reading memory[4096] is one past the end of the 4096-byte array. Since Chip-8 addresses are 12-bit, PC should never exceed 0xFFF.
+
+- ASan - Heap Buffer Overflow
+
+    program_counter was not checked against `CHIP8_MEMORY_SIZE` and had walked so far past the end of memory[] that it went past the entire `chip8_t` struct, into the ASan heap redzone.
+
+- **Root Cause:** `program_counter` is not checked against memory bounds before the fetch.
+
+---
+
 ## Future Optimisations
 
 If I had more time, I would love to implement:
