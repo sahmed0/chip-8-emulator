@@ -31,7 +31,13 @@ TEST_BIN := test_chip8.exe
 # in main.c only works inside the Emscripten virtual filesystem).
 ROM ?= roms/Space_Invaders.ch8
 
-.PHONY: all debug release run test clean
+# Fuzzer build (requires clang with LibFuzzer).
+# Install on MSYS2/UCRT64: pacman -S mingw-w64-ucrt-x86_64-clang
+FUZZ_CC  := clang
+FUZZ_SRC := fuzz/fuzz_chip8.c chip8.c
+FUZZ_BIN := fuzz/fuzz_chip8
+
+.PHONY: all debug release run test fuzz fuzz-run clean
 
 all: debug
 
@@ -50,5 +56,14 @@ test: $(TEST_SRC)
 	$(CC) -g -O0 $(WARNINGS) $(CSTD) $(TEST_SRC) -o $(TEST_BIN)
 	./$(TEST_BIN) $(ARGS)
 
+fuzz: $(FUZZ_SRC)
+	$(FUZZ_CC) -g -O1 $(CSTD) -fsanitize=fuzzer,address,undefined $(FUZZ_SRC) -o $(FUZZ_BIN)
+
+# Run the fuzzer; saves interesting inputs to fuzz/corpus/ for later replay.
+# Ctrl-C to stop. ASan/UBSan will print a report and exit on the first bug found.
+fuzz-run: fuzz
+	mkdir -p fuzz/corpus
+	./$(FUZZ_BIN) fuzz/corpus -max_len=3584
+
 clean:
-	rm -f $(DEBUG_BIN) $(RELEASE_BIN) $(TEST_BIN)
+	rm -f $(DEBUG_BIN) $(RELEASE_BIN) $(TEST_BIN) $(FUZZ_BIN)

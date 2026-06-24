@@ -503,6 +503,16 @@ _site/
 # Details at https://github.com/github/pages-gem/issues/768
 Gemfile.lock
 
+# LibFuzzer output files (crash/timeout/slow-unit inputs land in the cwd)
+crash-*
+slow-unit-*
+timeout-*
+leak-*
+# Fuzzer corpus (generated; not source)
+Chip8-web/fuzz/corpus/
+# Built fuzzer binary (extensionless, so *.exe/*.out don't catch it)
+Chip8-web/fuzz/fuzz_chip8
+
 # Un-ignore the docs folder so it can be deployed (as source)
 !docs/
 
