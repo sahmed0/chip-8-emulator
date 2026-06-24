@@ -5,8 +5,8 @@
 
 #define MAX_ROM_SIZE (CHIP8_MEMORY_SIZE - CHIP8_PROGRAM_START_ADDRESS)
 /* Cap cycles to prevent infinite-loop ROMs (e.g. 1NNN jumping to itself)
-   from hanging the fuzzer. 5000 cycles is enough to reach all OOB paths. */
-#define CYCLE_CAP 5000
+   from hanging the fuzzer. After fixing initial few crashes, fuzzer kept running for too long at 5000 cycles, so 1000 cycles should be enough to reach all OOB paths in a 3.5 KB ROM. */
+#define CYCLE_CAP 1000
 
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     if (size > MAX_ROM_SIZE)
@@ -30,8 +30,16 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     /* Seed initial key/register state from the input so the fuzzer can reach
        the keypad branches (EX9E/EXA1/FX0A) instead of always spinning on the
        "no key pressed" path. */
-    if (size > 0)
+    // Press two keys derived from both nibbles of first byte,
+    // and a third from the second byte if available; maximises the chance
+    // that FX0A finds a match without pressing every key unconditionally
+    if (size > 0) {
         chip8->keypad[data[0] & 0x0F] = 1;
+        chip8->keypad[(data[0] >> 4) & 0x0F] = 1;
+    }
+    if (size > 1) {
+        chip8->keypad[data[1] & 0x0F] = 1;
+    }
 
     chip8_load_rom(chip8, data, size);
 

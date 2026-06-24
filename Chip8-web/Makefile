@@ -33,6 +33,8 @@ ROM ?= roms/Space_Invaders.ch8
 
 # Fuzzer build (requires clang with LibFuzzer).
 # Install on MSYS2/UCRT64: pacman -S mingw-w64-ucrt-x86_64-clang
+# LibFuzzer works better with Linux clang so may need to run on WSL 
+# Install on WSL: sudo apt install clang
 FUZZ_CC  := clang
 FUZZ_SRC := fuzz/fuzz_chip8.c chip8.c
 FUZZ_BIN := fuzz/fuzz_chip8
@@ -63,7 +65,7 @@ fuzz: $(FUZZ_SRC)
 # Ctrl-C to stop. ASan/UBSan will print a report and exit on the first bug found.
 fuzz-run: fuzz
 	mkdir -p fuzz/corpus
-	./$(FUZZ_BIN) fuzz/corpus -max_len=3584
+	./$(FUZZ_BIN) fuzz/corpus -max_len=3584 -max_total_time=300 -print_final_stats=1
 
 clean:
 	rm -f $(DEBUG_BIN) $(RELEASE_BIN) $(TEST_BIN) $(FUZZ_BIN)
