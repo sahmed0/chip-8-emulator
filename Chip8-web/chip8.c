@@ -35,6 +35,26 @@ static const uint8_t fontset[80] = {
 };
 
 // -----------------------------------------------------------------------------
+// Memory access helpers
+// -----------------------------------------------------------------------------
+
+// Chip-8 has a 12-bit address space (0x000-0xFFF). Masking every access with
+// ADDRESS_MASK wraps any computed address back into the 4 KiB RAM, which both
+// matches the original hardware's addressing and guarantees memory accesses stay
+// in bounds. Routing all RAM reads/writes through these two accessors makes the
+// bounds check structurally unavoidable: raw chip8->memory[...] indexing becomes
+// the conspicuous exception rather than the easily-forgotten norm.
+#define ADDRESS_MASK (CHIP8_MEMORY_SIZE - 1) // 0x0FFF for 4096-byte RAM
+
+static inline uint8_t mem_read(const chip8_t *chip8, uint16_t addr) {
+  return chip8->memory[addr & ADDRESS_MASK];
+}
+
+static inline void mem_write(chip8_t *chip8, uint16_t addr, uint8_t value) {
+  chip8->memory[addr & ADDRESS_MASK] = value;
+}
+
+// -----------------------------------------------------------------------------
 // Core Implementation
 // -----------------------------------------------------------------------------
 
@@ -50,7 +70,7 @@ bool chip8_init(chip8_t *chip8) {
 
   // Load the built-in font set into memory (0x050 - 0x0A0).
   for (int i = 0; i < CHIP8_FONT_SIZE; ++i) {
-    chip8->memory[FONTSET_START_ADDRESS + i] = fontset[i];
+    mem_write(chip8, FONTSET_START_ADDRESS + i, fontset[i]);
   }
 
   // Seed the random number generator for the RND (0xCXXX) instruction.
@@ -86,10 +106,9 @@ void chip8_cycle(chip8_t *chip8) {
   // ---------------------------------------------------------------------------
   // Opcodes are 2 bytes (16-bit). Memory is 1 byte (8-bit).
   // We merge two bytes to form the opcode: (MSB << 8) | LSB.
-  // Chip-8 has a 12-bit address space; clamp PC before fetch.
-chip8->program_counter &= 0x0FFF;
-uint16_t opcode = (chip8->memory[chip8->program_counter] << 8) |
-                  chip8->memory[(chip8->program_counter + 1) & 0x0FFF];
+  // Chip-8 has a 12-bit address space; mem_read wraps each byte into range.
+  uint16_t opcode = (mem_read(chip8, chip8->program_counter) << 8) |
+                    mem_read(chip8, chip8->program_counter + 1);
 
   // Advance Program Counter to the next instruction.
   chip8->program_counter += 2;
@@ -261,7 +280,7 @@ uint16_t opcode = (chip8->memory[chip8->program_counter] << 8) |
 
     for (int yline = 0; yline < height; yline++) {
       // Fetch the pixel byte from memory at I + row index
-      pixel = chip8->memory[chip8->index_register + yline];
+      pixel = mem_read(chip8, chip8->index_register + yline);
 
       for (int xline = 0; xline < 8; xline++) {
         // Check each bit (pixel) in the byte (MSB to LSB calls 0x80 >> x)
@@ -290,11 +309,12 @@ uint16_t opcode = (chip8->memory[chip8->program_counter] << 8) |
   {
     switch (opcode & 0x00FF) {
     case 0x9E: // EX9E: SKP Vx (Skip next if key stored in Vx is pressed)
-      if (chip8->keypad[chip8->registers[reg_x]] != 0)
+      // Keys are a single hex nibble; mask to keep the keypad index in range.
+      if (chip8->keypad[chip8->registers[reg_x] & 0x0F] != 0)
         chip8->program_counter += 2;
       break;
     case 0xA1: // EXA1: SKNP Vx (Skip next if key stored in Vx is NOT pressed)
-      if (chip8->keypad[chip8->registers[reg_x]] == 0)
+      if (chip8->keypad[chip8->registers[reg_x] & 0x0F] == 0)
         chip8->program_counter += 2;
       break;
     }
@@ -338,18 +358,18 @@ uint16_t opcode = (chip8->memory[chip8->program_counter] << 8) |
           FONTSET_START_ADDRESS + (chip8->registers[reg_x] * 5);
       break;
     case 0x33: // LD B, Vx (Store BCD representation of Vx at I, I+1, I+2)
-      chip8->memory[chip8->index_register] = chip8->registers[reg_x] / 100;
-      chip8->memory[chip8->index_register + 1] =
-          (chip8->registers[reg_x] / 10) % 10;
-      chip8->memory[chip8->index_register + 2] = chip8->registers[reg_x] % 10;
+      mem_write(chip8, chip8->index_register, chip8->registers[reg_x] / 100);
+      mem_write(chip8, chip8->index_register + 1,
+                (chip8->registers[reg_x] / 10) % 10);
+      mem_write(chip8, chip8->index_register + 2, chip8->registers[reg_x] % 10);
       break;
     case 0x55: // LD [I], Vx (Dump registers V0-Vx into memory at I)
       for (int i = 0; i <= reg_x; i++)
-        chip8->memory[chip8->index_register + i] = chip8->registers[i];
+        mem_write(chip8, chip8->index_register + i, chip8->registers[i]);
       break;
     case 0x65: // LD Vx, [I] (Load memory at I into registers V0-Vx)
       for (int i = 0; i <= reg_x; i++)
-        chip8->registers[i] = chip8->memory[chip8->index_register + i];
+        chip8->registers[i] = mem_read(chip8, chip8->index_register + i);
       break;
     }
   } break;

@@ -65,6 +65,7 @@ This project solves the challenge of bringing legacy, low-level emulation to the
 The emulator accepts untrusted ROM input (drag-and-drop), so the core is fuzz-tested
 under AddressSanitizer and UndefinedBehaviorSanitizer. The harness is in `Chip8-web/fuzz/`.
 
+### First fuzzer pass
 Running `make fuzz-run` (requires clang, see Makefile) found two bugs, both at chip8.c:89-90:
 
 ```C
@@ -83,6 +84,22 @@ chip8->program_counter += 2;
 
 - **Root Cause:** `program_counter` is not checked against memory bounds before the fetch.
 
+### Second fuzzer pass
+Bound program_counter to memory and then ran fuzzer harness again.
+
+Output showed PC bug is fixed but surfaced similar bugs:
+
+- `keypad[]` array has 16 entries but `registers[reg_x]` values range from 0-255. Needs masking.
+
+- `index_register` reading/writing past `memory[4096]` in multiple places:
+    - DXYN Sprite read
+    - FX33 BCD write
+    - FX55 reg dump write
+    - FX65 reg load read
+
+**Fix:** Inline masking on every access would work but is easy to forget if I later add a new opcode.
+Instead, make two accessor functions for reading and writing memory that include bound checks and route all RAM reads/writes through them.
+Only exception is memcpy, which copies directly into memory.
 ---
 
 ## Future Optimisations
