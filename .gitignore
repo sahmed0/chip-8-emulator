@@ -504,7 +504,6 @@ _site/
 Gemfile.lock
 
 # LibFuzzer output files (crash/timeout/slow-unit inputs land in the cwd)
-crash-*
 slow-unit-*
 timeout-*
 leak-*
