@@ -86,8 +86,10 @@ void chip8_cycle(chip8_t *chip8) {
   // ---------------------------------------------------------------------------
   // Opcodes are 2 bytes (16-bit). Memory is 1 byte (8-bit).
   // We merge two bytes to form the opcode: (MSB << 8) | LSB.
-  uint16_t opcode = (chip8->memory[chip8->program_counter] << 8) |
-                    chip8->memory[chip8->program_counter + 1];
+  // Chip-8 has a 12-bit address space; clamp PC before fetch.
+chip8->program_counter &= 0x0FFF;
+uint16_t opcode = (chip8->memory[chip8->program_counter] << 8) |
+                  chip8->memory[(chip8->program_counter + 1) & 0x0FFF];
 
   // Advance Program Counter to the next instruction.
   chip8->program_counter += 2;
