@@ -44,7 +44,7 @@ This project solves the challenge of bringing legacy, low-level emulation to the
 
 ### 1. Mastering Low-Level Memory Management
 **The Challenge:** Learning to manually manage memory in C was a significant paradigm shift. Understanding how pointers, the stack, and the heap interact directly with hardware was critical not just for the emulator's correctness, but for its stability.
-**The Solution:** I implemented strict bounds checking for all memory access operations and studied the Chip-8 architecture to map its 4KB memory layout precisely to a `uint8_t` array, ensuring that every opcode manipulated the emulated RAM exactly as the original hardware would, without causing buffer overflows.
+**The Solution:** Every RAM access flows through two masking accessors (`mem_read`/`mem_write`) that fold any computed address into the 12-bit (4 KB) space, so a malformed or malicious ROM can never read or write outside the emulated RAM - it wraps, exactly as the original COSMAC VIP's 12-bit address bus did. See [Security & Robustness](#security--robustness) for the threat model and how it was verified.
 
 ### 2. The "Infinite Loop" Dilemma
 **The Challenge:** Traditional emulators run inside an infinite `while(true)` loop. In a browser environment, this blocks the main thread, causing the UI to freeze and the browser to crash.
@@ -60,46 +60,40 @@ This project solves the challenge of bringing legacy, low-level emulation to the
 
 ---
 
-## Robustness
+## Security & Robustness
 
-The emulator accepts untrusted ROM input (drag-and-drop), so the core is fuzz-tested
-under AddressSanitizer and UndefinedBehaviorSanitizer. The harness is in `Chip8-web/fuzz/`.
+**Threat model.** ROMs are untrusted input - anyone can drag-and-drop a file
+into the web UI. The interpreter therefore treats every guest-controlled index
+(memory addresses, the keypad index, register-file ranges) as adversarial.
 
-### First fuzzer pass
-Running `make fuzz-run` (requires clang, see Makefile) found two bugs, both at chip8.c:89-90:
+**Mitigations.**
 
-```C
-uint16_t opcode = (chip8->memory[chip8->program_counter] << 8) |
-                chip8->memory[chip8->program_counter + 1];
-chip8->program_counter += 2;
-```
+- **Memory.** All RAM reads/writes route through `mem_read`/`mem_write`, which
+  mask the address with `ADDRESS_MASK` (`0x0FFF`). Any address a ROM can produce
+  - via `ANNN`, `FX1E`, `DXYN`, `FX33`, `FX55`, `FX65`, or a runaway program
+  counter - wraps back into the 4 KB RAM. Raw `memory[...]` indexing is now the
+  conspicuous exception (only the `memcpy` in `chip8_load_rom`, which is
+  size-guarded). A `_Static_assert` pins the power-of-two RAM size the mask
+  depends on.
+- **Keypad.** `EX9E`/`EXA1` bounds-check `Vx` against the 16-key pad and treat
+  any out-of-range value as "not pressed", rather than aliasing it onto a real
+  key.
+- **Font.** `FX29` masks `Vx` to a nibble so the sprite address is always a
+  valid glyph.
 
-- UBSan - Out-of-Bounds Read at PC = 0xFFF
+**Verification.**
 
-    The fuzzer drove program_counter to 0xFFF (4095). Reading memory[4095] is valid (last byte), but reading memory[4096] is one past the end of the 4096-byte array. Since Chip-8 addresses are 12-bit, PC should never exceed 0xFFF.
+- **Regression tests** (`make test`, plain gcc) pin the wrap/mask behavior and
+  assert that the CPU-state fields adjacent to `memory[]` stay intact - see
+  `memory_safety_suite` in `Chip8-web/tests/test_chip8.c`. These guard against a
+  future refactor silently reintroducing an out-of-bounds access.
+- **Fuzzing** (`make fuzz-run`, requires clang/LibFuzzer; works best on WSL) runs
+  the core under AddressSanitizer and UndefinedBehaviorSanitizer. An early pass
+  drove the program counter past the end of RAM and surfaced the original
+  out-of-bounds reads/writes (`DXYN`, `FX33`, `FX55`, `FX65`, and the opcode
+  fetch); routing all access through the masking accessors fixed the entire
+  class. The harness and corpus live in `Chip8-web/fuzz/`.
 
-- ASan - Heap Buffer Overflow
-
-    program_counter was not checked against `CHIP8_MEMORY_SIZE` and had walked so far past the end of memory[] that it went past the entire `chip8_t` struct, into the ASan heap redzone.
-
-- **Root Cause:** `program_counter` is not checked against memory bounds before the fetch.
-
-### Second fuzzer pass
-Bound program_counter to memory and then ran fuzzer harness again.
-
-Output showed PC bug is fixed but surfaced similar bugs:
-
-- `keypad[]` array has 16 entries but `registers[reg_x]` values range from 0-255. Needs masking.
-
-- `index_register` reading/writing past `memory[4096]` in multiple places:
-    - DXYN Sprite read
-    - FX33 BCD write
-    - FX55 reg dump write
-    - FX65 reg load read
-
-**Fix:** Inline masking on every access would work but is easy to forget if I later add a new opcode.
-Instead, make two accessor functions for reading and writing memory that include bound checks and route all RAM reads/writes through them.
-Only exception is memcpy, which copies directly into memory.
 ---
 
 ## Future Optimisations

@@ -170,10 +170,187 @@ SUITE(arithmetic_suite) {
   RUN_TEST(add_sets_carry_and_truncates);
 }
 
+// -----------------------------------------------------------------------------
+// Memory-safety regression suite.
+//
+// These pin the address-masking (wrap) behavior of the core so the out-of-bounds
+// class of bug cannot silently return. Each test both (a) asserts the exact
+// wrapped destination/source, and (b) checks a canary on the struct fields that
+// the original OOB bug used to clobber (registers[], index_register,
+// program_counter). Runs under plain gcc -- no sanitizer required.
+// -----------------------------------------------------------------------------
+
+// FX55 dumping all 16 registers from I = 0x0FFF must wrap into the start of RAM,
+// NOT walk past memory[] into registers[]/index/PC. This is the exact exploit
+// the reviewer described (up to 15 bytes past memory[4096]).
+TEST fx55_full_dump_wraps_and_preserves_cpu_state(void) {
+  chip8_t c = make_machine(0xFF55); // LD [I], V0..VF
+  c.index_register = 0x0FFF;
+  for (int i = 0; i < 16; i++)
+    c.registers[i] = (uint8_t)(0x10 + i); // distinct: 0x10..0x1F
+
+  chip8_cycle(&c);
+
+  // Semantics: addresses wrap. mem[0xFFF]=V0, mem[(0x1000+k)&0xFFF]=V(k+1).
+  ASSERT_EQ_FMT(0x10, c.memory[0x0FFF], "0x%02X"); // V0
+  for (int i = 1; i < 16; i++)
+    ASSERT_EQ_FMT((uint8_t)(0x10 + i), c.memory[i - 1], "0x%02X"); // V1..VF
+
+  // Canary: the dump must not have corrupted CPU state. I is unchanged (this
+  // core does not auto-increment I), PC advanced by exactly one instruction,
+  // and the source registers are untouched.
+  ASSERT_EQ_FMT(0x0FFF, c.index_register, "0x%04X");
+  ASSERT_EQ_FMT(CHIP8_PROGRAM_START_ADDRESS + 2, c.program_counter, "0x%04X");
+  for (int i = 0; i < 16; i++)
+    ASSERT_EQ_FMT((uint8_t)(0x10 + i), c.registers[i], "0x%02X");
+  PASS();
+}
+
+// FX65 loading registers from I = 0x0FFF must read wrapped RAM, and must not
+// touch registers above the loaded range.
+TEST fx65_load_wraps_and_leaves_other_registers(void) {
+  chip8_t c = make_machine(0xF265); // LD V0..V2, [I]
+  c.index_register = 0x0FFF;
+  c.memory[0x0FFF] = 0xA0; // -> V0
+  c.memory[0x000] = 0xA1;  // -> V1 (wrapped)
+  c.memory[0x001] = 0xA2;  // -> V2 (wrapped)
+  for (int i = 3; i < 16; i++)
+    c.registers[i] = 0xCC; // canary
+
+  chip8_cycle(&c);
+
+  ASSERT_EQ_FMT(0xA0, c.registers[0], "0x%02X");
+  ASSERT_EQ_FMT(0xA1, c.registers[1], "0x%02X");
+  ASSERT_EQ_FMT(0xA2, c.registers[2], "0x%02X");
+  for (int i = 3; i < 16; i++)
+    ASSERT_EQ_FMT(0xCC, c.registers[i], "0x%02X"); // untouched
+  ASSERT_EQ_FMT(0x0FFF, c.index_register, "0x%04X");
+  PASS();
+}
+
+// FX33 BCD store at I = 0x0FFF must wrap its three bytes into RAM.
+TEST fx33_bcd_wraps_at_end_of_memory(void) {
+  chip8_t c = make_machine(0xF033); // LD B, V0
+  c.index_register = 0x0FFF;
+  c.registers[0] = 123;
+
+  chip8_cycle(&c);
+
+  ASSERT_EQ_FMT(1, c.memory[0x0FFF], "%d"); // hundreds
+  ASSERT_EQ_FMT(2, c.memory[0x000], "%d");  // tens   (wrapped)
+  ASSERT_EQ_FMT(3, c.memory[0x001], "%d");  // units  (wrapped)
+  ASSERT_EQ_FMT(123, c.registers[0], "%d"); // source untouched
+  ASSERT_EQ_FMT(0x0FFF, c.index_register, "0x%04X");
+  PASS();
+}
+
+// DXYN sprite read must wrap when I + row crosses the end of RAM.
+TEST dxyn_sprite_read_wraps_at_end_of_memory(void) {
+  chip8_t c = make_machine(0xD002); // DRW V0, V0, height=2
+  c.index_register = 0x0FFF;
+  c.registers[0] = 0;       // draw at (0,0)
+  c.memory[0x0FFF] = 0x80;  // row 0: leftmost pixel
+  c.memory[0x000] = 0x80;   // row 1: read from (I+1) wrapped to 0
+
+  chip8_cycle(&c);
+
+  // Row 0 lights display[0]; row 1 (wrapped read) lights display[DISPLAY_WIDTH].
+  const uint8_t *disp = chip8_get_display(&c);
+  ASSERT_EQ_FMT(1, disp[0], "%d");
+  ASSERT_EQ_FMT(1, disp[DISPLAY_WIDTH], "%d");
+  ASSERT_EQ_FMT(0, c.registers[0xF], "%d"); // no collision on a clear screen
+  PASS();
+}
+
+// Opcode fetch at PC = 0x0FFF must read the high byte from 0xFFF and the low
+// byte from the wrapped address 0x000 -- never memory[0x1000] (OOB).
+TEST pc_fetch_wraps_at_end_of_memory(void) {
+  chip8_t c;
+  chip8_init(&c);
+  c.program_counter = 0x0FFF;
+  c.memory[0x0FFF] = 0x60; // high byte: 6XNN
+  c.memory[0x000] = 0x42;  // low byte (wrapped): NN = 0x42 -> opcode 0x6042
+
+  chip8_cycle(&c); // executes LD V0, 0x42
+
+  ASSERT_EQ_FMT(0x42, c.registers[0], "0x%02X"); // proves low byte came from [0]
+  PASS();
+}
+
+// EX9E with an out-of-range key (Vx >= 16) must NOT skip, even if the aliased
+// in-range key (Vx & 0x0F) is held. Guards against the masking regression.
+TEST ex9e_out_of_range_key_does_not_skip(void) {
+  chip8_t c = make_machine(0xE09E); // SKP V0
+  c.registers[0] = 0xFF;            // 0xFF & 0x0F == 0x0F
+  c.keypad[0x0F] = 1;               // the aliased key IS pressed
+  uint16_t pc_before = c.program_counter;
+
+  chip8_cycle(&c);
+
+  // Fetch advances PC by 2; the skip must NOT add a further 2.
+  ASSERT_EQ_FMT(pc_before + 2, c.program_counter, "0x%04X");
+  PASS();
+}
+
+// EXA1 with an out-of-range key must skip (an absent key is "not pressed"),
+// even though the aliased in-range key is held.
+TEST exa1_out_of_range_key_skips(void) {
+  chip8_t c = make_machine(0xE0A1); // SKNP V0
+  c.registers[0] = 0xFF;
+  c.keypad[0x0F] = 1;
+  uint16_t pc_before = c.program_counter;
+
+  chip8_cycle(&c);
+
+  // Fetch (+2) plus the skip (+2).
+  ASSERT_EQ_FMT(pc_before + 4, c.program_counter, "0x%04X");
+  PASS();
+}
+
+// Sanity: a valid, pressed key still skips on EX9E (we did not break the normal
+// path while bounds-checking).
+TEST ex9e_valid_pressed_key_skips(void) {
+  chip8_t c = make_machine(0xE09E); // SKP V0
+  c.registers[0] = 0x05;
+  c.keypad[0x05] = 1;
+  uint16_t pc_before = c.program_counter;
+
+  chip8_cycle(&c);
+
+  ASSERT_EQ_FMT(pc_before + 4, c.program_counter, "0x%04X");
+  PASS();
+}
+
+// FX29 must mask Vx to a nibble: I = font_start + (Vx & 0x0F) * 5.
+TEST fx29_masks_vx_to_nibble(void) {
+  chip8_t c = make_machine(0xF029); // LD F, V0
+  c.registers[0] = 0x1A;            // nibble 0x0A -> glyph 'A'
+
+  chip8_cycle(&c);
+
+  // 0x50 + (0x0A * 5) == 0x50 + 50 == 130 (0x82). Unmasked would be 0xD2.
+  ASSERT_EQ_FMT(CHIP8_FONT_START_ADDRESS + (0x0A * 5), c.index_register,
+                "0x%04X");
+  PASS();
+}
+
+SUITE(memory_safety_suite) {
+  RUN_TEST(fx55_full_dump_wraps_and_preserves_cpu_state);
+  RUN_TEST(fx65_load_wraps_and_leaves_other_registers);
+  RUN_TEST(fx33_bcd_wraps_at_end_of_memory);
+  RUN_TEST(dxyn_sprite_read_wraps_at_end_of_memory);
+  RUN_TEST(pc_fetch_wraps_at_end_of_memory);
+  RUN_TEST(ex9e_out_of_range_key_does_not_skip);
+  RUN_TEST(exa1_out_of_range_key_skips);
+  RUN_TEST(ex9e_valid_pressed_key_skips);
+  RUN_TEST(fx29_masks_vx_to_nibble);
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
   GREATEST_MAIN_BEGIN();
   RUN_SUITE(arithmetic_suite);
+  RUN_SUITE(memory_safety_suite);
   GREATEST_MAIN_END();
 }

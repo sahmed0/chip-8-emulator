@@ -46,6 +46,12 @@ static const uint8_t fontset[80] = {
 // the conspicuous exception rather than the easily-forgotten norm.
 #define ADDRESS_MASK (CHIP8_MEMORY_SIZE - 1) // 0x0FFF for 4096-byte RAM
 
+// ADDRESS_MASK is only a valid wrap mask when the RAM size is a power of two.
+// Guard the assumption so a future change to CHIP8_MEMORY_SIZE fails loudly at
+// compile time instead of silently corrupting the mask.
+_Static_assert((CHIP8_MEMORY_SIZE & (CHIP8_MEMORY_SIZE - 1)) == 0,
+               "ADDRESS_MASK requires CHIP8_MEMORY_SIZE to be a power of two");
+
 static inline uint8_t mem_read(const chip8_t *chip8, uint16_t addr) {
   return chip8->memory[addr & ADDRESS_MASK];
 }
@@ -309,14 +315,22 @@ void chip8_cycle(chip8_t *chip8) {
   {
     switch (opcode & 0x00FF) {
     case 0x9E: // EX9E: SKP Vx (Skip next if key stored in Vx is pressed)
-      // Keys are a single hex nibble; mask to keep the keypad index in range.
-      if (chip8->keypad[chip8->registers[reg_x] & 0x0F] != 0)
+    {
+      // Vx is an arbitrary byte (0-255) but only keys 0x0-0xF exist. An index
+      // outside the keypad cannot be pressed, so bounds-check rather than mask
+      // (masking would alias e.g. 0x1F onto real key 0xF and forge a press).
+      uint8_t key = chip8->registers[reg_x];
+      bool pressed = (key < KEY_COUNT) && (chip8->keypad[key] != 0);
+      if (pressed)
         chip8->program_counter += 2;
-      break;
+    } break;
     case 0xA1: // EXA1: SKNP Vx (Skip next if key stored in Vx is NOT pressed)
-      if (chip8->keypad[chip8->registers[reg_x] & 0x0F] == 0)
+    {
+      uint8_t key = chip8->registers[reg_x];
+      bool pressed = (key < KEY_COUNT) && (chip8->keypad[key] != 0);
+      if (!pressed)
         chip8->program_counter += 2;
-      break;
+    } break;
     }
   } break;
 
@@ -353,9 +367,11 @@ void chip8_cycle(chip8_t *chip8) {
       chip8->index_register += chip8->registers[reg_x];
       break;
     case 0x29: // LD F, Vx (Set I = location of sprite for digit Vx)
-      // Glyphs are 5 bytes long. Offset = Digit * 5.
+      // Glyphs are 5 bytes long, one per hex digit. Mask Vx to a nibble so a
+      // stray value >0xF still resolves to a valid glyph instead of pointing
+      // into arbitrary RAM.
       chip8->index_register =
-          FONTSET_START_ADDRESS + (chip8->registers[reg_x] * 5);
+          FONTSET_START_ADDRESS + ((chip8->registers[reg_x] & 0x0F) * 5);
       break;
     case 0x33: // LD B, Vx (Store BCD representation of Vx at I, I+1, I+2)
       mem_write(chip8, chip8->index_register, chip8->registers[reg_x] / 100);
