@@ -1,10 +1,12 @@
 #include "chip8.h" // Defines the Chip-8 system structure and function prototypes.
 #include "logging.h" // Provides the LOG_INFO, LOG_ERROR macros for console output.
+#include "rewind.h" // Ring buffer of full-state snapshots for the rewind feature.
 #include <SDL.h> // Simple DirectMedia Layer: Handles window, rendering, and audio.
 #include <stdbool.h> // Standard bool support (true/false).
 #include <stdio.h>   // Standard I/O (printf, fopen, etc.).
 #include <stdlib.h>  // Standard Library (malloc, free, rand).
 #include <string.h>  // String helpers (strdup) for the native window title.
+#include <time.h>    // time(NULL) for the once-per-session PRNG seed.
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h> // Emscripten headers for WASM integration (main loop, keepalive).
@@ -85,12 +87,19 @@ SDL_Texture *g_sdl_texture =
 chip8_t
     g_chip8_core; // The core Chip-8 emulator instance (cpu state, memory, etc.)
 
+// Single PRNG seed captured once at startup and reused for every init/reset, so
+// an entire session is bit-reproducible (same seed + same inputs => same play).
+static uint32_t g_session_seed = 0;
+
 // Global ROM buffer for reset functionality.
 // When a ROM is loaded from the web, we save a copy here so the user can
 // "Reset" the game without re-uploading the file.
 uint8_t *g_backup_rom_buffer = NULL;
 long g_backup_rom_size = 0;
 bool g_is_paused = false; // Controls the pause state from the Web UI
+
+static rewind_buffer_t g_rewind;    // ~2.6 MB snapshot ring (global: too big for the stack)
+static bool g_is_rewinding = false; // true while the rewind key is held
 
 // -----------------------------------------------------------------------------
 // Timing Constants
@@ -181,7 +190,7 @@ static void load_rom_data(uint8_t *buffer, int size) {
     memcpy(g_backup_rom_buffer, buffer, size); // Save a copy for reset
 
   // Initialise the Chip-8 state (clear memory, registers, stack)
-  chip8_init(&g_chip8_core);
+  chip8_init(&g_chip8_core, g_session_seed);
   // Load the ROM into memory starting at 0x200
   chip8_load_rom(&g_chip8_core, buffer, size);
   printf("Web: Loaded ROM, size %d\n", size);
@@ -227,7 +236,12 @@ bool load_rom_from_file(const char *filename) {
  */
 EMSCRIPTEN_KEEPALIVE
 void reset_emulator_state() {
-  chip8_init(&g_chip8_core);
+  chip8_init(&g_chip8_core, g_session_seed);
+  rewind_init(&g_rewind);       // discard rewind history on reset
+  g_is_rewinding = false;       // clear the rewind flag too: reset can race with
+                                // a held key / JS set_rewinding(true), and a true
+                                // flag against a just-emptied ring freezes the
+                                // screen (rewind_pop returns false every frame).
   if (g_backup_rom_buffer && g_backup_rom_size > 0) {
     chip8_load_rom(&g_chip8_core, g_backup_rom_buffer, g_backup_rom_size);
   }
@@ -258,6 +272,20 @@ void step_single_cycle() {
   if (g_is_paused) {
     chip8_cycle(&g_chip8_core);
   }
+}
+
+/**
+ * Set the rewind state from JS. While active, the main loop plays history
+ * backwards. On deactivate, the emulator stays paused at the rewound frame
+ * (snapshot-to-restore) - JS should reflect the paused state in its UI.
+ *
+ * @param active true to start rewinding, false to stop (and pause).
+ */
+EMSCRIPTEN_KEEPALIVE
+void set_rewinding(bool active) {
+  g_is_rewinding = active;
+  if (!active)
+    g_is_paused = true;
 }
 
 // -----------------------------------------------------------------------------
@@ -311,12 +339,6 @@ void set_active_theme(int index) {
  * Called by Emscripten's main loop mechanism or the while(1) loop on desktop.
  */
 void emulator_main_loop(void) {
-  // If paused, we might still want to process input/UI events to prevent the
-  // window from freezing, but we skip the CPU cycle execution.
-  if (g_is_paused) {
-    // Intentionally empty: Logic handles pause by skipping the cpu cycle block
-    // below.
-  }
 
   uint32_t frame_start_time = SDL_GetTicks();
   SDL_Event event;
@@ -435,6 +457,17 @@ void emulator_main_loop(void) {
           g_is_paused = false; // Auto-resume on reset
         }
         break;
+
+      case SDLK_BACKSPACE:
+        // Hold to rewind; on release, stay paused at the rewound frame
+        // (snapshot-to-restore) so the player can react before resuming.
+        if (event.type == SDL_KEYDOWN) {
+          g_is_rewinding = true;
+        } else { // SDL_KEYUP
+          g_is_rewinding = false;
+          g_is_paused = true;
+        }
+        break;
       }
 
       if (chip8_key != -1) {
@@ -443,20 +476,28 @@ void emulator_main_loop(void) {
     }
   }
 
-  // --- CPU EXECUTION ---
-  // Run multiple CPU cycles per frame to speed up emulation.
-  // Standard is often around 10 cycles/frame for 600Hz effective clock speed.
-  if (!g_is_paused) {
+  // --- CPU EXECUTION / REWIND ---
+  if (g_is_rewinding) {
+    // Step backwards one snapshot per frame. When history is exhausted, hold on
+    // the oldest frame. Never push while rewinding (D12).
+    chip8_t prev;
+    if (rewind_pop(&g_rewind, &prev)) {
+      g_chip8_core = prev;
+      g_chip8_core.draw_flag = true; // force a redraw of the restored frame
+    }
+  } else if (!g_is_paused) {
+    // Snapshot the frame's starting state, then run the frame forward.
+    rewind_push(&g_rewind, &g_chip8_core);
     for (int i = 0; i < CPU_CYCLES_PER_FRAME; ++i) {
       chip8_cycle(&g_chip8_core);
     }
-    // Update Timers at 60Hz rate
     chip8_update_timers(&g_chip8_core);
   }
 
   // --- AUDIO HANDLING ---
-  // If the sound timer is active, tell SDL to play audio.
-  if (g_chip8_core.sound_timer > 0) {
+  // Silent while rewinding: replayed snapshots carry old sound_timer values that
+  // would otherwise re-trigger the buzzer frame-by-frame.
+  if (g_chip8_core.sound_timer > 0 && !g_is_rewinding) {
     SDL_PauseAudio(0); // Unpause (Play)
   } else {
     SDL_PauseAudio(1); // Pause
@@ -505,6 +546,10 @@ void emulator_main_loop(void) {
 // -----------------------------------------------------------------------------
 
 int main(int argc, char *argv[]) {
+  // Capture the session seed once. chip8_init substitutes a default if this is
+  // ever 0, so no extra guard is needed here.
+  g_session_seed = (uint32_t)time(NULL);
+
   // Initialise SDL (Video and Audio subsystems)
   if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO) < 0) {
     LOG_ERROR("SDL could not initialise! SDL_Error: %s", SDL_GetError());
@@ -567,10 +612,11 @@ int main(int argc, char *argv[]) {
   }
 
   // Initialise Chip-8 Context (Memory, CPU)
-  if (!chip8_init(&g_chip8_core)) {
+  if (!chip8_init(&g_chip8_core, g_session_seed)) {
     LOG_ERROR("Failed to initialise Chip-8");
     return 1;
   }
+  rewind_init(&g_rewind); // Empty the snapshot ring before the loop starts.
   LOG_INFO("Chip-8 Initialised");
 
   // Load Initial ROM File

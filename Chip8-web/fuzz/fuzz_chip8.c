@@ -22,10 +22,9 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     if (!chip8)
         return 0;
 
-    chip8_init(chip8);
-    /* chip8_init seeds rand() with time(NULL); override it so the CXNN opcode
-       is deterministic and any crash reproduces on corpus replay. */
-    srand(0);
+    /* Fixed nonzero seed => the CXNN opcode is deterministic and any crash
+       reproduces on corpus replay. (The core no longer touches global rand().) */
+    chip8_init(chip8, 0xC8C8C8C8u);
 
     /* Seed initial key/register state from the input so the fuzzer can reach
        the keypad branches (EX9E/EXA1/FX0A) instead of always spinning on the

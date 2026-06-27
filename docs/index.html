@@ -503,6 +503,7 @@
                 <button id="btn-pause">Pause <span class="key-hint">(Space)</span></button>
                 <button id="btn-step">Step <span class="key-hint">(Right)</span></button>
                 <button id="btn-reset">Reset <span class="key-hint">(Left)</span></button>
+                <button id="btn-rewind">Rewind <span class="key-hint">(Backspace)</span></button>
             </div>
 
             <!-- Game Instructions Display -->
@@ -698,6 +699,29 @@
                         requestAnimationFrame(updateRegisters);
                     }
                 };
+
+                // Bind "Rewind" Button (hold to rewind, release to pause)
+                const btnRewind = document.getElementById('btn-rewind');
+                const startRewind = () => {
+                    if (Module._set_rewinding) Module._set_rewinding(true);
+                };
+                const stopRewind = () => {
+                    if (Module._set_rewinding) Module._set_rewinding(false);
+                    // C auto-pauses on stop; mirror that in the UI.
+                    isPaused = true;
+                    document.getElementById('btn-pause').innerHTML =
+                        'Resume <span class="key-hint">(Space)</span>';
+                };
+                btnRewind.addEventListener('mousedown', startRewind);
+                btnRewind.addEventListener('mouseup', stopRewind);
+                btnRewind.addEventListener('mouseleave', stopRewind); // released off-button
+                // Backspace hotkey (prevent the browser's back-navigation default).
+                window.addEventListener('keydown', (e) => {
+                    if (e.key === 'Backspace' && !e.repeat) { e.preventDefault(); startRewind(); }
+                });
+                window.addEventListener('keyup', (e) => {
+                    if (e.key === 'Backspace') { e.preventDefault(); stopRewind(); }
+                });
 
                 // Setup Drag & Drop Zone
                 const dropZone = document.getElementById('drop-zone');

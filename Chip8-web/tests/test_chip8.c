@@ -9,10 +9,15 @@
 #include "greatest.h"
 
 #include "../chip8.h"
+#include "../rewind.h"
 
 // -----------------------------------------------------------------------------
 // Helpers
 // -----------------------------------------------------------------------------
+
+// Fixed seed for reproducible tests. Chosen distinct from CHIP8_DEFAULT_SEED so
+// the two are distinguishable.
+#define TEST_SEED 0x01234567u
 
 // Place a single opcode at the program start (0x200) so that exactly one
 // chip8_cycle() executes it. Opcodes are big-endian: high byte first.
@@ -24,7 +29,7 @@ static void load_opcode(chip8_t *c, uint16_t opcode) {
 // Fresh, initialised machine with one opcode loaded and ready to step.
 static chip8_t make_machine(uint16_t opcode) {
   chip8_t c;
-  chip8_init(&c);
+  chip8_init(&c, TEST_SEED);
   load_opcode(&c, opcode);
   return c;
 }
@@ -181,8 +186,7 @@ SUITE(arithmetic_suite) {
 // -----------------------------------------------------------------------------
 
 // FX55 dumping all 16 registers from I = 0x0FFF must wrap into the start of RAM,
-// NOT walk past memory[] into registers[]/index/PC. This is the exact exploit
-// the reviewer described (up to 15 bytes past memory[4096]).
+// NOT walk past memory[] into registers[]/index/PC.
 TEST fx55_full_dump_wraps_and_preserves_cpu_state(void) {
   chip8_t c = make_machine(0xFF55); // LD [I], V0..VF
   c.index_register = 0x0FFF;
@@ -266,7 +270,7 @@ TEST dxyn_sprite_read_wraps_at_end_of_memory(void) {
 // byte from the wrapped address 0x000 -- never memory[0x1000] (OOB).
 TEST pc_fetch_wraps_at_end_of_memory(void) {
   chip8_t c;
-  chip8_init(&c);
+  chip8_init(&c, TEST_SEED);
   c.program_counter = 0x0FFF;
   c.memory[0x0FFF] = 0x60; // high byte: 6XNN
   c.memory[0x000] = 0x42;  // low byte (wrapped): NN = 0x42 -> opcode 0x6042
@@ -346,11 +350,231 @@ SUITE(memory_safety_suite) {
   RUN_TEST(fx29_masks_vx_to_nibble);
 }
 
+// -----------------------------------------------------------------------------
+// Determinism: deterministic xorshift32 PRNG
+// -----------------------------------------------------------------------------
+
+// Fill program memory with repeated C0FF (RND V0, 0xFF) so each chip8_cycle
+// produces the next RNG byte in V0.
+static void fill_rng_program(chip8_t *c, int cycles) {
+  for (int i = 0; i < cycles; i++) {
+    c->memory[CHIP8_PROGRAM_START_ADDRESS + 2 * i] = 0xC0;
+    c->memory[CHIP8_PROGRAM_START_ADDRESS + 2 * i + 1] = 0xFF;
+  }
+}
+
+// Golden master: TEST_SEED (0x01234567) => these exact low bytes from xorshift32.
+// If this fails, the PRNG algorithm or seeding changed.
+TEST rng_golden_master_sequence(void) {
+  static const uint8_t golden[12] = {160, 68, 41, 244, 70,  81,
+                                     141, 108, 107, 44, 183, 135};
+  chip8_t c;
+  chip8_init(&c, TEST_SEED);
+  fill_rng_program(&c, 12);
+  for (int i = 0; i < 12; i++) {
+    chip8_cycle(&c);
+    ASSERT_EQ_FMT((int)golden[i], (int)c.registers[0], "%d");
+  }
+  PASS();
+}
+
+// Same seed + same program => identical V0 stream (referential transparency).
+TEST rng_same_seed_is_reproducible(void) {
+  chip8_t a, b;
+  chip8_init(&a, TEST_SEED);
+  chip8_init(&b, TEST_SEED);
+  fill_rng_program(&a, 32);
+  fill_rng_program(&b, 32);
+  for (int i = 0; i < 32; i++) {
+    chip8_cycle(&a);
+    chip8_cycle(&b);
+    ASSERT_EQ_FMT((int)a.registers[0], (int)b.registers[0], "%d");
+  }
+  PASS();
+}
+
+// Different seeds must diverge somewhere in the first 32 outputs.
+TEST rng_different_seed_diverges(void) {
+  chip8_t a, b;
+  chip8_init(&a, TEST_SEED);
+  chip8_init(&b, 0x89ABCDEFu);
+  fill_rng_program(&a, 32);
+  fill_rng_program(&b, 32);
+  int diverged = 0;
+  for (int i = 0; i < 32; i++) {
+    chip8_cycle(&a);
+    chip8_cycle(&b);
+    if (a.registers[0] != b.registers[0])
+      diverged = 1;
+  }
+  ASSERT_EQ_FMT(1, diverged, "%d");
+  PASS();
+}
+
+// Zero seed is substituted with CHIP8_DEFAULT_SEED (xorshift needs nonzero).
+TEST rng_zero_seed_uses_default(void) {
+  chip8_t z, d;
+  chip8_init(&z, 0u);
+  chip8_init(&d, CHIP8_DEFAULT_SEED);
+  fill_rng_program(&z, 16);
+  fill_rng_program(&d, 16);
+  for (int i = 0; i < 16; i++) {
+    chip8_cycle(&z);
+    chip8_cycle(&d);
+    ASSERT_EQ_FMT((int)d.registers[0], (int)z.registers[0], "%d");
+  }
+  PASS();
+}
+
+// The RNG must advance exactly once per CXNN regardless of the NN mask
+// C000 masks the draw to 0 but must still consume one step, so the
+// *next* C0FF yields the SECOND stream byte (golden[1]), not the first.
+TEST rng_advances_even_when_mask_is_zero(void) {
+  static const uint8_t golden1 = 68; // golden[1] for TEST_SEED
+  chip8_t c;
+  chip8_init(&c, TEST_SEED);
+  c.memory[CHIP8_PROGRAM_START_ADDRESS + 0] = 0xC0; // C000: RND V0, 0x00
+  c.memory[CHIP8_PROGRAM_START_ADDRESS + 1] = 0x00;
+  c.memory[CHIP8_PROGRAM_START_ADDRESS + 2] = 0xC0; // C0FF: RND V0, 0xFF
+  c.memory[CHIP8_PROGRAM_START_ADDRESS + 3] = 0xFF;
+  chip8_cycle(&c); // masked draw -> V0 == 0, but stream still advances
+  ASSERT_EQ_FMT(0, (int)c.registers[0], "%d");
+  chip8_cycle(&c);
+  ASSERT_EQ_FMT((int)golden1, (int)c.registers[0], "%d");
+  PASS();
+}
+
+SUITE(determinism_suite) {
+  RUN_TEST(rng_golden_master_sequence);
+  RUN_TEST(rng_same_seed_is_reproducible);
+  RUN_TEST(rng_different_seed_diverges);
+  RUN_TEST(rng_zero_seed_uses_default);
+  RUN_TEST(rng_advances_even_when_mask_is_zero);
+}
+
+// -----------------------------------------------------------------------------
+// Savestate: versioned blob round-trip and rejection
+// -----------------------------------------------------------------------------
+
+// save -> clobber live state -> load -> state matches the saved snapshot.
+TEST savestate_roundtrip_restores_state(void) {
+  chip8_t c;
+  chip8_init(&c, TEST_SEED);
+  c.registers[3] = 0xAB;
+  c.index_register = 0x321;
+  c.program_counter = 0x222;
+  c.memory[0x400] = 0x7E;
+
+  uint8_t buf[sizeof(chip8_t) + 64];
+  ASSERT(chip8_save_state(&c, buf, sizeof(buf)));
+
+  // Clobber live state, then restore.
+  chip8_init(&c, 0xFFFFFFFFu);
+  ASSERT(chip8_load_state(&c, buf, sizeof(buf)));
+  ASSERT_EQ_FMT(0xAB, (int)c.registers[3], "%d");
+  ASSERT_EQ_FMT(0x321, (int)c.index_register, "%d");
+  ASSERT_EQ_FMT(0x222, (int)c.program_counter, "%d");
+  ASSERT_EQ_FMT(0x7E, (int)c.memory[0x400], "%d");
+  PASS();
+}
+
+TEST savestate_rejects_bad_magic(void) {
+  chip8_t c;
+  chip8_init(&c, TEST_SEED);
+  uint8_t buf[sizeof(chip8_t) + 64];
+  ASSERT(chip8_save_state(&c, buf, sizeof(buf)));
+  buf[0] ^= 0xFF; // corrupt magic
+  ASSERT_FALSE(chip8_load_state(&c, buf, sizeof(buf)));
+  PASS();
+}
+
+TEST savestate_rejects_truncated_buffer(void) {
+  chip8_t c;
+  chip8_init(&c, TEST_SEED);
+  uint8_t buf[8]; // smaller than the header
+  ASSERT_FALSE(chip8_save_state(&c, buf, sizeof(buf)));
+  ASSERT_FALSE(chip8_load_state(&c, buf, sizeof(buf)));
+  PASS();
+}
+
+SUITE(savestate_suite) {
+  RUN_TEST(savestate_roundtrip_restores_state);
+  RUN_TEST(savestate_rejects_bad_magic);
+  RUN_TEST(savestate_rejects_truncated_buffer);
+}
+
+// -----------------------------------------------------------------------------
+// Rewind ring buffer
+// -----------------------------------------------------------------------------
+
+// Use program_counter as a per-snapshot tag so we can identify which frame came
+// back out of the ring.
+static chip8_t tagged_state(uint16_t tag) {
+  chip8_t c;
+  chip8_init(&c, TEST_SEED);
+  c.program_counter = tag;
+  return c;
+}
+
+TEST rewind_push_pop_is_lifo(void) {
+  static rewind_buffer_t rb; // static: too big for the stack
+  rewind_init(&rb);
+  for (uint16_t i = 1; i <= 5; i++) {
+    chip8_t s = tagged_state(i);
+    rewind_push(&rb, &s);
+  }
+  ASSERT_EQ_FMT(5, (int)rewind_count(&rb), "%d");
+  chip8_t out;
+  for (int expected = 5; expected >= 1; expected--) {
+    ASSERT(rewind_pop(&rb, &out));
+    ASSERT_EQ_FMT(expected, (int)out.program_counter, "%d");
+  }
+  PASS();
+}
+
+TEST rewind_pop_empty_returns_false(void) {
+  static rewind_buffer_t rb;
+  rewind_init(&rb);
+  chip8_t out;
+  ASSERT_FALSE(rewind_pop(&rb, &out));
+  PASS();
+}
+
+TEST rewind_overflow_drops_oldest(void) {
+  static rewind_buffer_t rb;
+  rewind_init(&rb);
+  // Push CAPACITY + 10 frames tagged 0..CAPACITY+9.
+  for (int i = 0; i < REWIND_CAPACITY + 10; i++) {
+    chip8_t s = tagged_state((uint16_t)i);
+    rewind_push(&rb, &s);
+  }
+  ASSERT_EQ_FMT(REWIND_CAPACITY, (int)rewind_count(&rb), "%d");
+  // Newest is the last pushed (CAPACITY+9); oldest retained is tag 10. Drain the
+  // whole ring newest-first and assert both ends so "drops oldest" is actually
+  // verified, not just the newest tag.
+  chip8_t out;
+  for (int expected = REWIND_CAPACITY + 9; expected >= 10; expected--) {
+    ASSERT(rewind_pop(&rb, &out));
+    ASSERT_EQ_FMT(expected, (int)out.program_counter, "%d");
+  }
+  ASSERT_FALSE(rewind_pop(&rb, &out)); // ring now empty; tags 0..9 were dropped
+  PASS();
+}
+
+SUITE(rewind_suite) {
+  RUN_TEST(rewind_push_pop_is_lifo);
+  RUN_TEST(rewind_pop_empty_returns_false);
+  RUN_TEST(rewind_overflow_drops_oldest);
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
   GREATEST_MAIN_BEGIN();
   RUN_SUITE(arithmetic_suite);
   RUN_SUITE(memory_safety_suite);
+  RUN_SUITE(determinism_suite);
+  RUN_SUITE(savestate_suite);
+  RUN_SUITE(rewind_suite);
   GREATEST_MAIN_END();
 }

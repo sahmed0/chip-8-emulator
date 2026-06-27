@@ -1,7 +1,5 @@
 #include "chip8.h"
-#include <stdlib.h>
 #include <string.h>
-#include <time.h>
 
 #define MEMORY_START_ADDRESS CHIP8_PROGRAM_START_ADDRESS
 #define FONTSET_START_ADDRESS CHIP8_FONT_START_ADDRESS
@@ -61,10 +59,28 @@ static inline void mem_write(chip8_t *chip8, uint16_t addr, uint8_t value) {
 }
 
 // -----------------------------------------------------------------------------
+// Deterministic PRNG (xorshift32)
+// -----------------------------------------------------------------------------
+
+// xorshift32 (Marsaglia, "Xorshift RNGs", J. Stat. Soft. 2003). Advances the
+// per-instance rng_state and returns the new 32-bit value. Keeping the state in
+// chip8_t (rather than libc's global rand()) is what makes the core
+// deterministic and trivially serializable. Precondition: rng_state != 0,
+// guaranteed by chip8_init.
+static inline uint32_t chip8_rand(chip8_t *chip8) {
+  uint32_t x = chip8->rng_state;
+  x ^= x << 13;
+  x ^= x >> 17;
+  x ^= x << 5;
+  chip8->rng_state = x;
+  return x;
+}
+
+// -----------------------------------------------------------------------------
 // Core Implementation
 // -----------------------------------------------------------------------------
 
-bool chip8_init(chip8_t *chip8) {
+bool chip8_init(chip8_t *chip8, uint32_t seed) {
   if (!chip8)
     return false;
 
@@ -79,8 +95,10 @@ bool chip8_init(chip8_t *chip8) {
     mem_write(chip8, FONTSET_START_ADDRESS + i, fontset[i]);
   }
 
-  // Seed the random number generator for the RND (0xCXXX) instruction.
-  srand((unsigned int)time(NULL));
+  // Seed the deterministic PRNG. xorshift32 requires a nonzero state, so a
+  // caller-supplied 0 is replaced with the documented default. (Runs AFTER the
+  // memset above, which would otherwise zero it.)
+  chip8->rng_state = (seed != 0u) ? seed : CHIP8_DEFAULT_SEED;
 
   return true;
 }
@@ -273,7 +291,10 @@ void chip8_cycle(chip8_t *chip8) {
     break;
 
   case 0xC000: // CXNN: RND Vx, byte (Set Vx = random byte & NN)
-    chip8->registers[reg_x] = (rand() % 256) & byte_val;
+    // Deterministic PRNG (xorshift32) instead of libc rand(). We always advance
+    // the RNG exactly once per CXNN so the stream stays reproducible regardless
+    // of the NN mask.
+    chip8->registers[reg_x] = (uint8_t)(chip8_rand(chip8) & 0xFFu) & byte_val;
     break;
 
   case 0xD000: // DXYN: DRW Vx, Vy, nibble (Draw Sprite)
@@ -416,4 +437,43 @@ const uint8_t *chip8_get_display(chip8_t *chip8) {
   if (!chip8)
     return NULL;
   return chip8->display;
+}
+
+// -----------------------------------------------------------------------------
+// Savestate serialization (versioned blob)
+// -----------------------------------------------------------------------------
+// Blob = [magic u32][version u32][payload_size u32][raw chip8_t bytes].
+// Host-endian, layout-specific: a same-machine save format (not portable).
+
+#define CHIP8_STATE_HEADER_SIZE (3u * sizeof(uint32_t))
+
+size_t chip8_state_size(void) {
+  return CHIP8_STATE_HEADER_SIZE + sizeof(chip8_t);
+}
+
+bool chip8_save_state(const chip8_t *chip8, uint8_t *buffer, size_t buffer_size) {
+  if (!chip8 || !buffer || buffer_size < chip8_state_size())
+    return false;
+
+  uint32_t header[3] = {CHIP8_STATE_MAGIC, CHIP8_STATE_VERSION,
+                        (uint32_t)sizeof(chip8_t)};
+  memcpy(buffer, header, sizeof(header));
+  memcpy(buffer + CHIP8_STATE_HEADER_SIZE, chip8, sizeof(chip8_t));
+  return true;
+}
+
+bool chip8_load_state(chip8_t *chip8, const uint8_t *buffer, size_t buffer_size) {
+  if (!chip8 || !buffer || buffer_size < chip8_state_size())
+    return false;
+
+  uint32_t header[3];
+  memcpy(header, buffer, sizeof(header));
+  if (header[0] != CHIP8_STATE_MAGIC || header[1] != CHIP8_STATE_VERSION ||
+      header[2] != (uint32_t)sizeof(chip8_t))
+    return false;
+
+  // Header validated; commit the payload. *chip8 is untouched on any failure
+  // above, so a rejected blob never corrupts live state.
+  memcpy(chip8, buffer + CHIP8_STATE_HEADER_SIZE, sizeof(chip8_t));
+  return true;
 }

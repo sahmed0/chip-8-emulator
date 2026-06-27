@@ -37,6 +37,8 @@ This project solves the challenge of bringing legacy, low-level emulation to the
 - **Real-time Debugging**: Inspect CPU state (Program Counter, Index Register, Stack) and general-purpose registers (`V0`-`VF`) in real-time.
 - **Visual Customisation**: Switch between retro-themed colour palettes (e.g., *Blade Runner*, *Cyberpunk*) on the fly.
 - **Cross-Platform Architecture**: The core logic is completely decoupled from the rendering layer, allowing for future ports to Desktop or Embedded systems.
+- **Deterministic Core**: The CPU is a pure state machine with an injectable PRNG seed (xorshift32) - same seed + same input sequence ⇒ bit-identical execution. No global `rand()`, fully reproducible and replayable.
+- **Rewind**: Hold **Backspace** to rewind ~10 seconds of play. A 600-frame ring buffer of full-state snapshots, made possible by the serializable core.
 
 ---
 
@@ -81,6 +83,16 @@ into the web UI. The interpreter therefore treats every guest-controlled index
 - **Font.** `FX29` masks `Vx` to a nibble so the sprite address is always a
   valid glyph.
 
+### Determinism & Reproducibility
+The core never touches global libc state. The `CXNN` (RND) opcode draws from a
+per-instance `xorshift32` generator (Marsaglia 2003) whose seed is injected via
+`chip8_init(c, seed)`, the host passes `time(NULL)`; tests pass constants. This
+gives the core referential transparency: **same seed + same input sequence ⇒
+bit-identical execution**, verified by a golden-master test
+(`determinism_suite`). As a direct consequence, `chip8_t` is a flat POD blob, so
+savestates are a versioned `memcpy` (`chip8_save_state` / `chip8_load_state`) and
+the rewind feature is a ring of struct snapshots.
+
 **Verification.**
 
 - **Regression tests** (`make test`, plain gcc) pin the wrap/mask behavior and
@@ -101,7 +113,6 @@ into the web UI. The interpreter therefore treats every guest-controlled index
 If I had more time, I would love to implement:
 
 - **Super Chip-8 (SCHIP) Support**: Extending the opcode set to support 128x64 resolution games.
-- **Rewind Capability**: Implementing a ring buffer to store state snapshots, allowing players to "rewind" time after a mistake.
 - **Mobile Friendly Controls**: A visual interface to map keyboard keys to the Chip-8 hex keypad `0-F` so mobile users without a physical keyboard can also play the games.
 
 ---

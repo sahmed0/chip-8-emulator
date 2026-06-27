@@ -25,6 +25,17 @@
 #define DISPLAY_HEIGHT 32 // Vertical resolution in pixels
 #define DISPLAY_SIZE (DISPLAY_WIDTH * DISPLAY_HEIGHT) // Total pixels
 
+// Default PRNG seed substituted when a caller passes 0 (xorshift32 requires a
+// nonzero state). Value is Marsaglia's canonical xorshift32 default.
+#define CHIP8_DEFAULT_SEED 2463534242u
+
+// Savestate blob format. The header lets chip8_load_state reject stale,
+// truncated, or wrong-version blobs. Bump CHIP8_STATE_VERSION if chip8_t's
+// layout ever changes. NOTE: the blob is host-endian and layout-specific - a
+// same-machine save format, not a portable one.
+#define CHIP8_STATE_MAGIC   0x43385354u // 'C8ST'
+#define CHIP8_STATE_VERSION 1u
+
 // -----------------------------------------------------------------------------
 // Data Structures
 // -----------------------------------------------------------------------------
@@ -104,6 +115,14 @@ typedef struct {
    * Effectively a "dirty" flag for the renderer to know when to redraw.
    */
   bool draw_flag;
+
+  /**
+   * PRNG state for the CXNN (RND) instruction - xorshift32 (Marsaglia 2003).
+   * Lives inside chip8_t so the core is self-contained (no global libc rand)
+   * and the whole struct is a flat POD blob: same seed + same input sequence
+   * produce bit-identical execution. Seeded by chip8_init; always nonzero.
+   */
+  uint32_t rng_state;
 } chip8_t;
 
 // -----------------------------------------------------------------------------
@@ -112,12 +131,16 @@ typedef struct {
 
 /**
  * Initialise the Chip-8 system.
- * Clears memory, registers, and loads the standard font set.
+ * Clears memory, registers, and loads the standard font set, then seeds the
+ * deterministic PRNG. The core never touches global rand()/srand(): the same
+ * seed + same input sequence always yields identical execution.
  *
- * @param c Pointer to the chip8_t instance to initialise.
+ * @param c    Pointer to the chip8_t instance to initialise.
+ * @param seed PRNG seed. Pass time(NULL) for a fresh run, or a constant for a
+ *             reproducible one. A seed of 0 is replaced with CHIP8_DEFAULT_SEED.
  * @return true if initialisation was successful, false otherwise.
  */
-bool chip8_init(chip8_t *c);
+bool chip8_init(chip8_t *c, uint32_t seed);
 
 /**
  * Load a ROM into the system memory.
@@ -160,5 +183,25 @@ void chip8_set_key(chip8_t *c, int key, bool down);
  * @return Pointer to the uint8_t display array.
  */
 const uint8_t *chip8_get_display(chip8_t *c);
+
+/**
+ * Total size in bytes of a savestate blob (header + serialized state).
+ * Callers allocate a buffer of at least this size before chip8_save_state.
+ */
+size_t chip8_state_size(void);
+
+/**
+ * Serialize the full machine state into buffer as a versioned blob.
+ * @return true on success; false if buffer is NULL or smaller than
+ *         chip8_state_size().
+ */
+bool chip8_save_state(const chip8_t *c, uint8_t *buffer, size_t buffer_size);
+
+/**
+ * Restore machine state from a blob produced by chip8_save_state. Validates the
+ * magic, version, and payload size; on any mismatch, *c is left untouched.
+ * @return true on success; false on NULL args, short buffer, or header mismatch.
+ */
+bool chip8_load_state(chip8_t *c, const uint8_t *buffer, size_t buffer_size);
 
 #endif // CHIP8_H

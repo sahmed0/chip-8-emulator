@@ -10,7 +10,7 @@
 #   make clean      -> remove build artifacts
 
 CC      := gcc
-SRC     := main.c chip8.c
+SRC     := main.c chip8.c rewind.c
 DEBUG_BIN   := chip8_debug.exe
 RELEASE_BIN := chip8.exe
 
@@ -24,7 +24,7 @@ CSTD     := -std=c11
 
 # Unit tests (greatest, single-header). The core (chip8.c) is SDL-free, so the
 # test binary links it directly -- no SDL, no main.c.
-TEST_SRC := tests/test_chip8.c chip8.c
+TEST_SRC := tests/test_chip8.c chip8.c rewind.c
 TEST_BIN := test_chip8.exe
 
 # Default ROM for `make run` (relative to this dir; the /roms absolute default

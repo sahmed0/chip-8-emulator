@@ -26,7 +26,7 @@ try {
     # Prepend to PATH for THIS process only so gcc's cc1 subprocess finds its DLLs.
     $env:Path = "$toolchainBin;$env:Path"
 
-    $src = @("tests/test_chip8.c", "chip8.c")
+    $src = @("tests/test_chip8.c", "chip8.c", "rewind.c")
     $bin = "test_chip8.exe"
 
     Write-Host "Building $bin with $(Join-Path $toolchainBin 'gcc.exe')..." -ForegroundColor Cyan
