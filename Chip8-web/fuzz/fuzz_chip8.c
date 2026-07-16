@@ -26,6 +26,10 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
        reproduces on corpus replay. (The core no longer touches global rand().) */
     chip8_init(chip8, 0xC8C8C8C8u);
 
+    /* Fuzz both dialects: byte 2 selects the quirk profile. */
+    if (size > 2 && (data[2] & 1))
+        chip8_set_quirks(chip8, chip8_quirks_schip());
+
     /* Seed initial key/register state from the input so the fuzzer can reach
        the keypad branches (EX9E/EXA1/FX0A) instead of always spinning on the
        "no key pressed" path. */

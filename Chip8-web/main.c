@@ -486,12 +486,13 @@ void emulator_main_loop(void) {
       g_chip8_core.draw_flag = true; // force a redraw of the restored frame
     }
   } else if (!g_is_paused) {
-    // Snapshot the frame's starting state, then run the frame forward.
+    // Snapshot the frame's starting state, then run the frame forward. A
+    // display-wait draw latches vblank_wait, ending the batch early (VIP quirk).
     rewind_push(&g_rewind, &g_chip8_core);
-    for (int i = 0; i < CPU_CYCLES_PER_FRAME; ++i) {
+    for (int i = 0; i < CPU_CYCLES_PER_FRAME && !g_chip8_core.vblank_wait; ++i) {
       chip8_cycle(&g_chip8_core);
     }
-    chip8_update_timers(&g_chip8_core);
+    chip8_update_timers(&g_chip8_core); // also clears vblank_wait (the "vblank")
   }
 
   // --- AUDIO HANDLING ---

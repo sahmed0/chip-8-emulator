@@ -33,8 +33,36 @@
 // truncated, or wrong-version blobs. Bump CHIP8_STATE_VERSION if chip8_t's
 // layout ever changes. NOTE: the blob is host-endian and layout-specific - a
 // same-machine save format, not a portable one.
+// Version 2 added the quirks/vblank_wait fields to chip8_t, so v1 blobs (which
+// lack them) are structurally incompatible and correctly rejected.
 #define CHIP8_STATE_MAGIC   0x43385354u // 'C8ST'
-#define CHIP8_STATE_VERSION 1u
+#define CHIP8_STATE_VERSION 2u
+
+// -----------------------------------------------------------------------------
+// Dialect Quirks
+// -----------------------------------------------------------------------------
+
+/**
+ * Dialect quirks. CHIP-8 has no single spec: the original COSMAC VIP
+ * interpreter and the HP48 SCHIP interpreter disagree on six behaviors, and
+ * ROMs written for one break on the other. Each flag selects one side of one
+ * ambiguity; the presets below reproduce the two real machines.
+ * Fields are uint8_t (not bool) so chip8_t stays a flat, padding-stable blob.
+ */
+typedef struct {
+  uint8_t vf_reset;           // 8XY1/2/3 set VF=0 afterwards (VIP: 1, SCHIP: 0)
+  uint8_t memory_increment_i; // FX55/FX65 leave I = I + X + 1 (VIP: 1, SCHIP: 0)
+  uint8_t display_wait;       // DXYN halts execution until vblank (VIP: 1, SCHIP: 0)
+  uint8_t clipping;           // Sprites clip at edges; start coords wrap (both: 1; 0 = full wrap)
+  uint8_t shift_vy;           // 8XY6/8XYE shift Vy into Vx (VIP: 1) vs shift Vx in place (SCHIP: 0)
+  uint8_t jump_vx;            // BXNN jumps to XNN + VX (SCHIP: 1) vs BNNN + V0 (VIP: 0)
+} chip8_quirks_t;
+
+// Profile ids for the FFI boundary (web UI dropdown indexes these).
+typedef enum {
+  CHIP8_PROFILE_VIP = 0,   // Original COSMAC VIP (default)
+  CHIP8_PROFILE_SCHIP = 1, // HP48 Super-CHIP dialect (1.1, without hires)
+} chip8_profile_t;
 
 // -----------------------------------------------------------------------------
 // Data Structures
@@ -123,6 +151,16 @@ typedef struct {
    * produce bit-identical execution. Seeded by chip8_init; always nonzero.
    */
   uint32_t rng_state;
+
+  /** Active dialect quirks (see chip8_quirks_t). Set by chip8_init to the
+   *  COSMAC VIP preset; hosts switch profiles via chip8_set_quirks. Lives in
+   *  chip8_t so savestates and rewind snapshots carry the profile with them. */
+  chip8_quirks_t quirks;
+
+  /** Display-wait latch. When quirks.display_wait is set, DXYN draws and then
+   *  sets this; the host stops executing cycles for the rest of the frame.
+   *  chip8_update_timers (the 60 Hz "vblank") clears it. */
+  uint8_t vblank_wait;
 } chip8_t;
 
 // -----------------------------------------------------------------------------
@@ -203,5 +241,14 @@ bool chip8_save_state(const chip8_t *c, uint8_t *buffer, size_t buffer_size);
  * @return true on success; false on NULL args, short buffer, or header mismatch.
  */
 bool chip8_load_state(chip8_t *c, const uint8_t *buffer, size_t buffer_size);
+
+/** Quirk preset reproducing the original COSMAC VIP interpreter. */
+chip8_quirks_t chip8_quirks_vip(void);
+
+/** Quirk preset reproducing the HP48 Super-CHIP dialect (no hires). */
+chip8_quirks_t chip8_quirks_schip(void);
+
+/** Replace the active quirk set. Takes effect from the next instruction. */
+void chip8_set_quirks(chip8_t *c, chip8_quirks_t quirks);
 
 #endif // CHIP8_H

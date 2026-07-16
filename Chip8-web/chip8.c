@@ -100,7 +100,35 @@ bool chip8_init(chip8_t *chip8, uint32_t seed) {
   // memset above, which would otherwise zero it.)
   chip8->rng_state = (seed != 0u) ? seed : CHIP8_DEFAULT_SEED;
 
+  // Default profile is the original machine (COSMAC VIP). Runs after the memset
+  // so it is not zeroed; hosts may switch later via chip8_set_quirks.
+  chip8->quirks = chip8_quirks_vip();
+
   return true;
+}
+
+// -----------------------------------------------------------------------------
+// Dialect quirk presets
+// -----------------------------------------------------------------------------
+
+chip8_quirks_t chip8_quirks_vip(void) {
+  chip8_quirks_t q = {
+      .vf_reset = 1, .memory_increment_i = 1, .display_wait = 1,
+      .clipping = 1, .shift_vy = 1, .jump_vx = 0};
+  return q;
+}
+
+chip8_quirks_t chip8_quirks_schip(void) {
+  chip8_quirks_t q = {
+      .vf_reset = 0, .memory_increment_i = 0, .display_wait = 0,
+      .clipping = 1, .shift_vy = 0, .jump_vx = 1};
+  return q;
+}
+
+void chip8_set_quirks(chip8_t *chip8, chip8_quirks_t quirks) {
+  if (!chip8)
+    return;
+  chip8->quirks = quirks;
 }
 
 void chip8_load_rom(chip8_t *chip8, const uint8_t *data, size_t size) {
@@ -220,12 +248,21 @@ void chip8_cycle(chip8_t *chip8) {
       break;
     case 0x1: // OR Vx, Vy
       chip8->registers[reg_x] |= chip8->registers[reg_y];
+      // VIP quirk: the ALU used VF as scratch, so logic ops zero it.
+      if (chip8->quirks.vf_reset)
+        chip8->registers[0xF] = 0;
       break;
     case 0x2: // AND Vx, Vy
       chip8->registers[reg_x] &= chip8->registers[reg_y];
+      // VIP quirk: the ALU used VF as scratch, so logic ops zero it.
+      if (chip8->quirks.vf_reset)
+        chip8->registers[0xF] = 0;
       break;
     case 0x3: // XOR Vx, Vy
       chip8->registers[reg_x] ^= chip8->registers[reg_y];
+      // VIP quirk: the ALU used VF as scratch, so logic ops zero it.
+      if (chip8->quirks.vf_reset)
+        chip8->registers[0xF] = 0;
       break;
     case 0x4: // ADD Vx, Vy (Set VF = carry)
     {
@@ -246,13 +283,12 @@ void chip8_cycle(chip8_t *chip8) {
       // Write VF last so the flag survives even when Vx == VF.
       chip8->registers[0xF] = flag;
     } break;
-    case 0x6: // SHR Vx (Shift Right)
+    case 0x6: // SHR (VIP shifts Vy into Vx; SCHIP shifts Vx in place)
     {
-      // Ambiguity: Modern Chip-8 implementations (Schip) shift Vx.
-      // Original COSMAC VIP shifted Vy into Vx. We use modern behavior (Vx).
-      // Save LSB for VF.
-      uint8_t flag = chip8->registers[reg_x] & 0x1;
-      chip8->registers[reg_x] >>= 1;
+      uint8_t src = chip8->quirks.shift_vy ? chip8->registers[reg_y]
+                                           : chip8->registers[reg_x];
+      uint8_t flag = src & 0x1;
+      chip8->registers[reg_x] = src >> 1;
       // Write VF last so the flag survives even when Vx == VF.
       chip8->registers[0xF] = flag;
     } break;
@@ -266,11 +302,12 @@ void chip8_cycle(chip8_t *chip8) {
       // Write VF last so the flag survives even when Vx == VF.
       chip8->registers[0xF] = flag;
     } break;
-    case 0xE: // SHL Vx (Shift Left)
+    case 0xE: // SHL (VIP shifts Vy into Vx; SCHIP shifts Vx in place)
     {
-      // Save MSB for VF.
-      uint8_t flag = (chip8->registers[reg_x] >> 7) & 0x1;
-      chip8->registers[reg_x] <<= 1;
+      uint8_t src = chip8->quirks.shift_vy ? chip8->registers[reg_y]
+                                           : chip8->registers[reg_x];
+      uint8_t flag = (src >> 7) & 0x1;
+      chip8->registers[reg_x] = src << 1;
       // Write VF last so the flag survives even when Vx == VF.
       chip8->registers[0xF] = flag;
     } break;
@@ -286,8 +323,10 @@ void chip8_cycle(chip8_t *chip8) {
     chip8->index_register = addr_val;
     break;
 
-  case 0xB000: // BNNN: JP V0, addr (Jump to V0 + NNN)
-    chip8->program_counter = addr_val + chip8->registers[0];
+  case 0xB000: // VIP: JP V0+NNN. SCHIP quirk: JP VX+XNN (X = high nibble of NNN).
+    chip8->program_counter =
+        addr_val + (chip8->quirks.jump_vx ? chip8->registers[reg_x]
+                                          : chip8->registers[0]);
     break;
 
   case 0xC000: // CXNN: RND Vx, byte (Set Vx = random byte & NN)
@@ -300,36 +339,55 @@ void chip8_cycle(chip8_t *chip8) {
   case 0xD000: // DXYN: DRW Vx, Vy, nibble (Draw Sprite)
   {
     uint8_t height = opcode & 0x000F;
-    uint8_t pixel;
+
+    // Reference behavior: the START coordinates wrap into the display, but the
+    // sprite body clips at the edges (quirks.clipping, on for VIP and SCHIP).
+    // With clipping off, every pixel wraps (XO-CHIP style).
+    uint8_t start_x = chip8->registers[reg_x] % DISPLAY_WIDTH;
+    uint8_t start_y = chip8->registers[reg_y] % DISPLAY_HEIGHT;
 
     // Default VF to 0 (no collision).
     chip8->registers[0xF] = 0;
 
     for (int yline = 0; yline < height; yline++) {
-      // Fetch the pixel byte from memory at I + row index
-      pixel = mem_read(chip8, chip8->index_register + yline);
-
+      uint8_t pixel = mem_read(chip8, chip8->index_register + yline);
+      int target_y = start_y + yline;
+      if (target_y >= DISPLAY_HEIGHT) {
+        if (chip8->quirks.clipping)
+          continue; // row is off the bottom edge
+        target_y %= DISPLAY_HEIGHT;
+      }
       for (int xline = 0; xline < 8; xline++) {
         // Check each bit (pixel) in the byte (MSB to LSB calls 0x80 >> x)
-        if ((pixel & (0x80 >> xline)) != 0) {
-          int target_x = (chip8->registers[reg_x] + xline) % DISPLAY_WIDTH;
-          int target_y = (chip8->registers[reg_y] + yline) % DISPLAY_HEIGHT;
-          int index = target_y * DISPLAY_WIDTH + target_x;
+        if ((pixel & (0x80 >> xline)) == 0)
+          continue;
+        int target_x = start_x + xline;
+        if (target_x >= DISPLAY_WIDTH) {
+          if (chip8->quirks.clipping)
+            continue; // pixel is off the right edge
+          target_x %= DISPLAY_WIDTH;
+        }
+        int index = target_y * DISPLAY_WIDTH + target_x;
 
-          // XOR Drawing Logic:
-          // If the pixel on screen is 1 and we draw a 1, it turns off (0).
-          // This collision sets VF to 1.
-          if (chip8->display[index] == 1) {
-            chip8->registers[0xF] = 1;
-            chip8->display[index] = 0;
-          } else {
-            chip8->display[index] = 1;
-          }
+        // XOR Drawing Logic:
+        // If the pixel on screen is 1 and we draw a 1, it turns off (0).
+        // This collision sets VF to 1.
+        if (chip8->display[index] == 1) {
+          chip8->registers[0xF] = 1;
+          chip8->display[index] = 0;
+        } else {
+          chip8->display[index] = 1;
         }
       }
     }
     // Flag the system that a redraw is required.
     chip8->draw_flag = true;
+
+    // VIP quirk: drawing waited for the next vertical blank, capping ROMs to
+    // one draw per frame. We draw immediately, then halt the rest of the
+    // frame's cycle budget (the host checks vblank_wait; update_timers clears).
+    if (chip8->quirks.display_wait)
+      chip8->vblank_wait = 1;
   } break;
 
   case 0xE000: // Key OpCodes
@@ -403,10 +461,16 @@ void chip8_cycle(chip8_t *chip8) {
     case 0x55: // LD [I], Vx (Dump registers V0-Vx into memory at I)
       for (int i = 0; i <= reg_x; i++)
         mem_write(chip8, chip8->index_register + i, chip8->registers[i]);
+      // VIP quirk: the interpreter's copy loop left I pointing past the block.
+      if (chip8->quirks.memory_increment_i)
+        chip8->index_register += reg_x + 1;
       break;
     case 0x65: // LD Vx, [I] (Load memory at I into registers V0-Vx)
       for (int i = 0; i <= reg_x; i++)
         chip8->registers[i] = mem_read(chip8, chip8->index_register + i);
+      // VIP quirk: the interpreter's copy loop left I pointing past the block.
+      if (chip8->quirks.memory_increment_i)
+        chip8->index_register += reg_x + 1;
       break;
     }
   } break;
@@ -420,6 +484,10 @@ void chip8_cycle(chip8_t *chip8) {
 void chip8_update_timers(chip8_t *chip8) {
   if (!chip8)
     return;
+
+  // A timer tick is the 60 Hz vertical blank: it releases any ROM that halted
+  // execution on a display-wait draw so the next frame's cycles can run.
+  chip8->vblank_wait = 0;
 
   if (chip8->delay_timer > 0)
     chip8->delay_timer--;

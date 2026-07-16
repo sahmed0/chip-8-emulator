@@ -128,21 +128,23 @@ TEST sub_into_vf_keeps_flag(void) {
   PASS();
 }
 
-// 8XY6 SHR into VF.
+// 8XY6 SHR into VF. Under the VIP default the shift source is Vy, so V0 carries
+// the shifted-out bit here; the point is that VF (the destination) still ends as
+// the flag, not the 0x02 shift result.
 TEST shr_into_vf_keeps_flag(void) {
-  chip8_t c = make_machine(0x8F06); // SHR VF
-  c.registers[0xF] = 0x03;          // LSB = 1
+  chip8_t c = make_machine(0x8F06); // SHR VF, V0
+  c.registers[0] = 0x05;            // Vy: LSB = 1, Vy >> 1 = 0x02
   chip8_cycle(&c);
-  ASSERT_EQ_FMT(1, c.registers[0xF], "%d"); // shifted-out bit, not 0x01
+  ASSERT_EQ_FMT(1, c.registers[0xF], "%d"); // flag wins over the 0x02 result
   PASS();
 }
 
-// 8XYE SHL into VF.
+// 8XYE SHL into VF (VIP source is Vy; see shr_into_vf_keeps_flag).
 TEST shl_into_vf_keeps_flag(void) {
-  chip8_t c = make_machine(0x8F0E); // SHL VF
-  c.registers[0xF] = 0x81;          // MSB = 1
+  chip8_t c = make_machine(0x8F0E); // SHL VF, V0
+  c.registers[0] = 0x81;            // Vy: MSB = 1, Vy << 1 = 0x02
   chip8_cycle(&c);
-  ASSERT_EQ_FMT(1, c.registers[0xF], "%d"); // shifted-out bit, not 0x02
+  ASSERT_EQ_FMT(1, c.registers[0xF], "%d"); // flag wins over the 0x02 result
   PASS();
 }
 
@@ -200,10 +202,10 @@ TEST fx55_full_dump_wraps_and_preserves_cpu_state(void) {
   for (int i = 1; i < 16; i++)
     ASSERT_EQ_FMT((uint8_t)(0x10 + i), c.memory[i - 1], "0x%02X"); // V1..VF
 
-  // Canary: the dump must not have corrupted CPU state. I is unchanged (this
-  // core does not auto-increment I), PC advanced by exactly one instruction,
-  // and the source registers are untouched.
-  ASSERT_EQ_FMT(0x0FFF, c.index_register, "0x%04X");
+  // Canary: the dump must not have corrupted CPU state. Under the VIP default
+  // profile FX55 increments I by X+1 (X=0xF here, so I = 0x0FFF + 16), PC
+  // advanced by exactly one instruction, and the source registers are untouched.
+  ASSERT_EQ_FMT(0x0FFF + 16, c.index_register, "0x%04X");
   ASSERT_EQ_FMT(CHIP8_PROGRAM_START_ADDRESS + 2, c.program_counter, "0x%04X");
   for (int i = 0; i < 16; i++)
     ASSERT_EQ_FMT((uint8_t)(0x10 + i), c.registers[i], "0x%02X");
@@ -228,7 +230,8 @@ TEST fx65_load_wraps_and_leaves_other_registers(void) {
   ASSERT_EQ_FMT(0xA2, c.registers[2], "0x%02X");
   for (int i = 3; i < 16; i++)
     ASSERT_EQ_FMT(0xCC, c.registers[i], "0x%02X"); // untouched
-  ASSERT_EQ_FMT(0x0FFF, c.index_register, "0x%04X");
+  // VIP default increments I by X+1 (X=2 here, so I = 0x0FFF + 3).
+  ASSERT_EQ_FMT(0x0FFF + 3, c.index_register, "0x%04X");
   PASS();
 }
 
@@ -567,6 +570,222 @@ SUITE(rewind_suite) {
   RUN_TEST(rewind_overflow_drops_oldest);
 }
 
+// -----------------------------------------------------------------------------
+// Dialect quirks (VIP default vs SCHIP)
+// -----------------------------------------------------------------------------
+
+// 8XY1/2/3 zero VF under the VIP profile (the ALU used VF as scratch), but leave
+// it untouched under SCHIP.
+TEST vf_reset_zeros_vf_under_vip_only(void) {
+  const uint16_t ops[3] = {0x8011, 0x8012, 0x8013}; // OR/AND/XOR V0, V1
+  for (int i = 0; i < 3; i++) {
+    chip8_t v = make_machine(ops[i]);
+    v.registers[0] = 0xF0;
+    v.registers[1] = 0x0F;
+    v.registers[0xF] = 0x5; // canary
+    chip8_cycle(&v);
+    ASSERT_EQ_FMT(0, v.registers[0xF], "%d"); // VIP zeroes VF
+
+    chip8_t s = make_machine(ops[i]);
+    chip8_set_quirks(&s, chip8_quirks_schip());
+    s.registers[0] = 0xF0;
+    s.registers[1] = 0x0F;
+    s.registers[0xF] = 0x5; // canary
+    chip8_cycle(&s);
+    ASSERT_EQ_FMT(0x5, s.registers[0xF], "%d"); // SCHIP leaves it
+  }
+  PASS();
+}
+
+// 8XY6/8XYE read the source from Vy under VIP (result into Vx) and from Vx under
+// SCHIP; the flag is the shifted-out bit of whichever source was used.
+TEST shift_uses_vy_under_vip_and_vx_under_schip(void) {
+  // 8XY6 (SHR V0, V1)
+  {
+    chip8_t v = make_machine(0x8016);
+    v.registers[0] = 0x08;
+    v.registers[1] = 0x05; // LSB set
+    chip8_cycle(&v);
+    ASSERT_EQ_FMT(0x02, v.registers[0], "0x%02X"); // Vy >> 1
+    ASSERT_EQ_FMT(1, v.registers[0xF], "%d");      // flag = Vy LSB
+
+    chip8_t s = make_machine(0x8016);
+    chip8_set_quirks(&s, chip8_quirks_schip());
+    s.registers[0] = 0x08;
+    s.registers[1] = 0x05;
+    chip8_cycle(&s);
+    ASSERT_EQ_FMT(0x04, s.registers[0], "0x%02X"); // Vx >> 1
+    ASSERT_EQ_FMT(0, s.registers[0xF], "%d");      // flag = Vx LSB
+  }
+  // 8XYE (SHL V0, V1)
+  {
+    chip8_t v = make_machine(0x801E);
+    v.registers[0] = 0x01;
+    v.registers[1] = 0x81; // MSB set
+    chip8_cycle(&v);
+    ASSERT_EQ_FMT(0x02, v.registers[0], "0x%02X"); // Vy << 1
+    ASSERT_EQ_FMT(1, v.registers[0xF], "%d");      // flag = Vy MSB
+
+    chip8_t s = make_machine(0x801E);
+    chip8_set_quirks(&s, chip8_quirks_schip());
+    s.registers[0] = 0x01;
+    s.registers[1] = 0x81;
+    chip8_cycle(&s);
+    ASSERT_EQ_FMT(0x02, s.registers[0], "0x%02X"); // Vx << 1
+    ASSERT_EQ_FMT(0, s.registers[0xF], "%d");      // flag = Vx MSB
+  }
+  PASS();
+}
+
+// BXNN: VIP jumps to NNN + V0; SCHIP jumps to XNN + VX (X = high nibble of NNN).
+TEST jump_vx_selects_v0_under_vip_and_vx_under_schip(void) {
+  chip8_t v = make_machine(0xB285); // X = 2
+  v.registers[0] = 0x01;
+  v.registers[2] = 0x10;
+  chip8_cycle(&v);
+  ASSERT_EQ_FMT(0x286, v.program_counter, "0x%04X"); // 0x285 + V0
+
+  chip8_t s = make_machine(0xB285);
+  chip8_set_quirks(&s, chip8_quirks_schip());
+  s.registers[0] = 0x01;
+  s.registers[2] = 0x10;
+  chip8_cycle(&s);
+  ASSERT_EQ_FMT(0x295, s.program_counter, "0x%04X"); // 0x285 + V2
+  PASS();
+}
+
+// FX55/FX65 leave I untouched under SCHIP (the VIP increment is pinned by the
+// memory_safety_suite FX55/FX65 tests).
+TEST memory_increment_i_off_under_schip(void) {
+  chip8_t s = make_machine(0xF255); // LD [I], V0..V2
+  chip8_set_quirks(&s, chip8_quirks_schip());
+  s.index_register = 0x300;
+  chip8_cycle(&s);
+  ASSERT_EQ_FMT(0x300, s.index_register, "0x%04X"); // unchanged under SCHIP
+  PASS();
+}
+
+// Sprite body clips at the right/bottom edges when quirks.clipping is on, and
+// wraps every pixel when it is off.
+TEST clipping_drops_or_wraps_edge_pixels(void) {
+  // Horizontal: 8-wide row at x=60 lights 60..63 and clips 0..3.
+  {
+    chip8_t v = make_machine(0xD011); // DRW V0, V1, height=1
+    v.registers[0] = 60;
+    v.registers[1] = 0;
+    v.index_register = 0x300;
+    v.memory[0x300] = 0xFF; // 8 lit pixels
+    chip8_cycle(&v);
+    const uint8_t *d = chip8_get_display(&v);
+    for (int x = 60; x < 64; x++)
+      ASSERT_EQ_FMT(1, d[x], "%d"); // on-screen pixels lit
+    for (int x = 0; x < 4; x++)
+      ASSERT_EQ_FMT(0, d[x], "%d"); // clipped, not wrapped
+  }
+  // Same sprite with clipping off wraps 0..3 back on.
+  {
+    chip8_t w = make_machine(0xD011);
+    chip8_quirks_t q = chip8_quirks_vip();
+    q.clipping = 0;
+    chip8_set_quirks(&w, q);
+    w.registers[0] = 60;
+    w.registers[1] = 0;
+    w.index_register = 0x300;
+    w.memory[0x300] = 0xFF;
+    chip8_cycle(&w);
+    const uint8_t *d = chip8_get_display(&w);
+    for (int x = 60; x < 64; x++)
+      ASSERT_EQ_FMT(1, d[x], "%d");
+    for (int x = 0; x < 4; x++)
+      ASSERT_EQ_FMT(1, d[x], "%d"); // wrapped on
+  }
+  // Vertical: height-4 sprite at y=30 draws rows 30,31 and clips rows 32,33 (no
+  // wrap onto row 0).
+  {
+    chip8_t v = make_machine(0xD014);
+    v.registers[0] = 0;
+    v.registers[1] = 30;
+    v.index_register = 0x300;
+    for (int r = 0; r < 4; r++)
+      v.memory[0x300 + r] = 0x80; // leftmost pixel each row
+    chip8_cycle(&v);
+    const uint8_t *d = chip8_get_display(&v);
+    ASSERT_EQ_FMT(1, d[30 * DISPLAY_WIDTH], "%d");
+    ASSERT_EQ_FMT(1, d[31 * DISPLAY_WIDTH], "%d");
+    ASSERT_EQ_FMT(0, d[0], "%d"); // row 32 clipped, did not wrap to row 0
+  }
+  PASS();
+}
+
+// Start coordinates always wrap into the display, even with clipping on: a
+// sprite at x=68 begins at x=68%64=4.
+TEST start_coords_wrap_even_with_clipping(void) {
+  chip8_t v = make_machine(0xD011);
+  v.registers[0] = 68;
+  v.registers[1] = 0;
+  v.index_register = 0x300;
+  v.memory[0x300] = 0x80; // single leftmost pixel
+  chip8_cycle(&v);
+  const uint8_t *d = chip8_get_display(&v);
+  ASSERT_EQ_FMT(1, d[4], "%d"); // 68 % 64 == 4
+  PASS();
+}
+
+// DXYN latches vblank_wait under VIP (display-wait); chip8_update_timers clears
+// it. Under SCHIP the latch is never set.
+TEST display_wait_latches_under_vip_only(void) {
+  chip8_t v = make_machine(0xD001);
+  v.index_register = 0x300;
+  chip8_cycle(&v);
+  ASSERT_EQ_FMT(1, v.vblank_wait, "%d");
+  chip8_update_timers(&v);
+  ASSERT_EQ_FMT(0, v.vblank_wait, "%d"); // vblank released it
+
+  chip8_t s = make_machine(0xD001);
+  chip8_set_quirks(&s, chip8_quirks_schip());
+  s.index_register = 0x300;
+  chip8_cycle(&s);
+  ASSERT_EQ_FMT(0, s.vblank_wait, "%d"); // SCHIP does not wait
+  PASS();
+}
+
+// The versioned savestate blob round-trips the quirks fields.
+TEST savestate_v2_roundtrips_quirks(void) {
+  chip8_t c;
+  chip8_init(&c, TEST_SEED);
+  chip8_set_quirks(&c, chip8_quirks_schip());
+
+  uint8_t buf[sizeof(chip8_t) + 64];
+  ASSERT(chip8_save_state(&c, buf, sizeof(buf)));
+
+  chip8_init(&c, TEST_SEED); // clobber back to the VIP default
+  ASSERT_EQ_FMT(0, (int)c.quirks.jump_vx, "%d"); // sanity: VIP restored by init
+  ASSERT(chip8_load_state(&c, buf, sizeof(buf)));
+  ASSERT_EQ_FMT(1, (int)c.quirks.jump_vx, "%d"); // SCHIP profile came back
+  PASS();
+}
+
+// chip8_init installs the COSMAC VIP preset.
+TEST default_profile_is_vip(void) {
+  chip8_t c;
+  chip8_init(&c, TEST_SEED);
+  ASSERT_EQ_FMT(1, (int)c.quirks.display_wait, "%d");
+  ASSERT_EQ_FMT(0, (int)c.quirks.jump_vx, "%d");
+  PASS();
+}
+
+SUITE(quirks_suite) {
+  RUN_TEST(vf_reset_zeros_vf_under_vip_only);
+  RUN_TEST(shift_uses_vy_under_vip_and_vx_under_schip);
+  RUN_TEST(jump_vx_selects_v0_under_vip_and_vx_under_schip);
+  RUN_TEST(memory_increment_i_off_under_schip);
+  RUN_TEST(clipping_drops_or_wraps_edge_pixels);
+  RUN_TEST(start_coords_wrap_even_with_clipping);
+  RUN_TEST(display_wait_latches_under_vip_only);
+  RUN_TEST(savestate_v2_roundtrips_quirks);
+  RUN_TEST(default_profile_is_vip);
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -576,5 +795,6 @@ int main(int argc, char **argv) {
   RUN_SUITE(determinism_suite);
   RUN_SUITE(savestate_suite);
   RUN_SUITE(rewind_suite);
+  RUN_SUITE(quirks_suite);
   GREATEST_MAIN_END();
 }
